@@ -1,7 +1,7 @@
 """Build fixtures/materials.json for the mock materials API from the CC0 data bundled with the Lightsmith library.
 
 Needs the Python library (it ships the CC0 tables):
-    uv run --project ../PlasmonHub --with pyyaml python scripts/build_material_fixtures.py [DATA_DIR]
+    uv run --project ../lightsmith --with pyyaml python scripts/build_material_fixtures.py [DATA_DIR]
 The output mimics the materials service's /v1 responses (see src/lib/materials/types.ts).
 """
 

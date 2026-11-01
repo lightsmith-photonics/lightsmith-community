@@ -101,7 +101,7 @@ spectra with angle, polarization and diffraction orders; waveguide modes (disper
 
 `fixtures/demo/` holds one problem per kind and the result the library computed for it. They serve as editor examples, seed data and
 test references. Rebuild them after library changes; the scripts run in the library's own environment from a sibling checkout at
-`../PlasmonHub` (the `lightsmith` repository):
+`../lightsmith`:
 
 ```bash
 npm run fixtures:schema && npm run fixtures:demo && npm run fixtures:materials

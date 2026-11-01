@@ -1,7 +1,7 @@
 """Build fixtures/demo/: one example problem per kind and the result the library computes for it.
 
 Used by the seed script and as test data for the result viewers. Needs the Python library:
-    uv run --project ../PlasmonHub python scripts/build_demo_results.py
+    uv run --project ../lightsmith python scripts/build_demo_results.py
 """
 
 from __future__ import annotations

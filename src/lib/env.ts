@@ -7,15 +7,15 @@ export const env = {
   get siteUrl() {
     return trim(process.env.SITE_URL ?? process.env.AUTH_URL) || "http://localhost:3000";
   },
-  /** The Lightsmith technical report (sibling repository lightsmith-paper). */
+  /** The Lightsmith technical report; empty hides the links until it is published. */
   get paperUrl() {
-    return process.env.PAPER_URL || "https://github.com/OWNER/lightsmith-paper";
+    return trim(process.env.PAPER_URL);
   },
   get studioUrl() {
     return trim(process.env.STUDIO_URL) || "http://localhost:5173";
   },
   get githubRepo() {
-    return process.env.GITHUB_REPO_URL || "https://github.com/OWNER/lightsmith";
+    return process.env.GITHUB_REPO_URL || "https://github.com/lightsmith-photonics/lightsmith";
   },
   get materialsApiUrl() {
     return trim(process.env.MATERIALS_API_URL);

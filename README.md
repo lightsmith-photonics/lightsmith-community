@@ -1,6 +1,6 @@
 # Lightsmith Community
 
-The community site of [Lightsmith](https://github.com/OWNER/lightsmith) ([technical report](https://github.com/OWNER/lightsmith-paper)), the open photonics suite: shared simulation projects with
+The community site of [Lightsmith](https://github.com/lightsmith-photonics/lightsmith), the open photonics suite: shared simulation projects with
 interactive results, a materials explorer with per-paper citations, and a forum that speaks LaTeX.
 
 Stack: Next.js 15 (App Router, standalone output) · TypeScript · Tailwind CSS 4 · Prisma 6 on PostgreSQL · Auth.js v5 (database

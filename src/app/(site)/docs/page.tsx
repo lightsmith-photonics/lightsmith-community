@@ -18,10 +18,12 @@ export default function DocsHome() {
         <a href={env.githubRepo}>GitHub</a>.
       </p>
 
-      <p>
-        For the methods, conventions and the cross-method benchmarks behind them, read the{" "}
-        <a href={env.paperUrl}>{brand.product} technical report</a>.
-      </p>
+      {env.paperUrl && (
+        <p>
+          For the methods, conventions and the cross-method benchmarks behind them, read the{" "}
+          <a href={env.paperUrl}>{brand.product} technical report</a>.
+        </p>
+      )}
 
       <h2>Install</h2>
       <CodeBlock code={`${L.install}               # CPU\n${L.installGpu}        # + PyTorch for GPU solvers\n${L.installMcp}        # + MCP server for AI agents`} label="Install with uv" />

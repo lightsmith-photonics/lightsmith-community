@@ -29,9 +29,11 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
               <li>
                 <Link className="hover:text-fg" href="/pricing">Pricing</Link>
               </li>
-              <li>
-                <a className="hover:text-fg" href={env.paperUrl}>Technical report</a>
-              </li>
+              {env.paperUrl && (
+                <li>
+                  <a className="hover:text-fg" href={env.paperUrl}>Technical report</a>
+                </li>
+              )}
               <li>
                 <a className="hover:text-fg" href={env.githubRepo}>GitHub</a>
               </li>

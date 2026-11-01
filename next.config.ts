@@ -26,6 +26,10 @@ const nextConfig: NextConfig = {
         source: "/api/specs/:id",
         headers: [{ key: "Access-Control-Allow-Origin", value: "*" }],
       },
+      {
+        source: "/api/projects/:slug/versions/:n/specs/:index",
+        headers: [{ key: "Access-Control-Allow-Origin", value: "*" }],
+      },
     ];
   },
 };

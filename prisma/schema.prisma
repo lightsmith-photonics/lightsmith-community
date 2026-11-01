@@ -28,18 +28,20 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  accounts      Account[]
-  sessions      Session[]
-  projects      Project[]
-  stars         Star[]
-  threads       Thread[]
-  posts         Post[]
-  votes         Vote[]
-  flags         Flag[]               @relation("FlagReporter")
-  notifications Notification[]       @relation("NotificationRecipient")
-  actedNotifs   Notification[]       @relation("NotificationActor")
-  submissions   MaterialSubmission[]
-  jobs          Job[]
+  accounts       Account[]
+  sessions       Session[]
+  projects       Project[]
+  stars          Star[]
+  threads        Thread[]
+  posts          Post[]
+  votes          Vote[]
+  flags          Flag[]                @relation("FlagReporter")
+  notifications  Notification[]        @relation("NotificationRecipient")
+  actedNotifs    Notification[]        @relation("NotificationActor")
+  submissions    MaterialSubmission[]
+  jobs           Job[]
+  versions       ProjectVersion[]      @relation("VersionAuthor")
+  collaborations ProjectCollaborator[]
 }
 
 model Account {
@@ -81,28 +83,36 @@ model VerificationToken {
 // ---------- Projects ----------
 
 model Project {
-  id           String    @id @default(cuid())
-  slug         String    @unique
-  title        String
-  description  String    @default("")
+  id                  String          @id @default(cuid())
+  slug                String          @unique
+  title               String
+  description         String          @default("")
   /// Markdown notes
-  notes        String    @default("")
+  notes               String          @default("")
   /// "public" | "unlisted" | "private"
-  visibility   String    @default("public")
+  visibility          String          @default("public")
   /// comma-separated lower-case tags
-  tags         String    @default("")
-  ownerId      String
-  owner        User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  forkedFromId String?
-  forkedFrom   Project?  @relation("Forks", fields: [forkedFromId], references: [id], onDelete: SetNull)
-  forks        Project[] @relation("Forks")
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  tags                String          @default("")
+  ownerId             String
+  owner               User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  forkedFromId        String?
+  forkedFrom          Project?        @relation("Forks", fields: [forkedFromId], references: [id], onDelete: SetNull)
+  forks               Project[]       @relation("Forks")
+  /// the exact version a fork was made from (lineage: "forked from … v3")
+  forkedFromVersionId String?
+  forkedFromVersion   ProjectVersion? @relation("ForkedFromVersion", fields: [forkedFromVersionId], references: [id], onDelete: SetNull)
+  /// the version the live specs match; every spec save creates a new one
+  currentVersionId    String?         @unique
+  currentVersion      ProjectVersion? @relation("CurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
 
-  specs   Spec[]
-  results ResultRecord[]
-  stars   Star[]
-  jobs    Job[]
+  specs         Spec[]
+  results       ResultRecord[]
+  stars         Star[]
+  jobs          Job[]
+  versions      ProjectVersion[]      @relation("ProjectVersions")
+  collaborators ProjectCollaborator[]
 
   @@index([ownerId])
   @@index([visibility, updatedAt])
@@ -128,11 +138,11 @@ model Spec {
 }
 
 model ResultRecord {
-  id        String   @id @default(cuid())
-  projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  specId    String?
-  spec      Spec?    @relation(fields: [specId], references: [id], onDelete: SetNull)
+  id         String   @id @default(cuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  specId     String?
+  spec       Spec?    @relation(fields: [specId], references: [id], onDelete: SetNull)
   name       String
   /// result kind: cross_sections | spectrum | modes | sparameters | bands
   kind       String   @default("cross_sections")
@@ -146,8 +156,68 @@ model ResultRecord {
   createdAt  DateTime @default(now())
 
   attachments Post[]
+  versions    VersionResult[]
 
   @@index([projectId])
+}
+
+/// Users other than the owner who may save specs, run them and create versions.
+model ProjectCollaborator {
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([projectId, userId])
+  @@index([userId])
+}
+
+/// An immutable snapshot of a project's specs. Numbers start at 1 per project.
+model ProjectVersion {
+  id           String   @id @default(cuid())
+  projectId    String
+  project      Project  @relation("ProjectVersions", fields: [projectId], references: [id], onDelete: Cascade)
+  number       Int
+  authorId     String?
+  author       User?    @relation("VersionAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  message      String   @default("")
+  /// [{ id, name, kind, problem }]: the project's specs at this version (see src/lib/versions/snapshot.ts)
+  specs        Json
+  /// number of the version this one restored, if it was a restore
+  restoredFrom Int?
+  createdAt    DateTime @default(now())
+
+  results   VersionResult[]
+  currentOf Project?        @relation("CurrentVersion")
+  forks     Project[]       @relation("ForkedFromVersion")
+  jobs      Job[]
+
+  @@unique([projectId, number])
+}
+
+/// A result linked to a version. It keeps its own copy of the metadata and the object-storage key, so the
+/// version stays intact when the live result row is deleted; the object is deleted with the last reference.
+model VersionResult {
+  id         String         @id @default(cuid())
+  versionId  String
+  version    ProjectVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  resultId   String?
+  result     ResultRecord?  @relation(fields: [resultId], references: [id], onDelete: SetNull)
+  /// id and name of the spec (in the version's snapshot) that produced it
+  specId     String?
+  specName   String?
+  name       String
+  kind       String
+  method     String
+  backend    String
+  storageKey String
+  sizeBytes  Int
+  preview    String
+  createdAt  DateTime       @default(now())
+
+  @@index([versionId])
+  @@index([storageKey])
 }
 
 model Star {
@@ -161,22 +231,25 @@ model Star {
 }
 
 model Job {
-  id        String   @id @default(cuid())
+  id        String          @id @default(cuid())
   /// id assigned by Lightsmith Cloud (lightsmith-cloud) (or the mock runner)
-  remoteId  String   @unique
+  remoteId  String          @unique
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project   Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   specId    String
-  spec      Spec     @relation(fields: [specId], references: [id], onDelete: Cascade)
-  method    String   @default("auto")
-  device    String   @default("auto")
+  spec      Spec            @relation(fields: [specId], references: [id], onDelete: Cascade)
+  /// version current when the job was submitted; its result is linked to it
+  versionId String?
+  version   ProjectVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  method    String          @default("auto")
+  device    String          @default("auto")
   /// "queued" | "running" | "succeeded" | "failed" | "cancelled"
-  status    String   @default("queued")
+  status    String          @default("queued")
   error     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
 
   @@index([projectId])
 }
@@ -285,7 +358,7 @@ model Notification {
   user      User      @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
   actorId   String?
   actor     User?     @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
-  /// "mention" | "reply" | "accepted" | "star" | "fork" | "moderation" | "submission"
+  /// "mention" | "reply" | "accepted" | "star" | "fork" | "collaborator" | "moderation" | "submission"
   type      String
   message   String
   url       String

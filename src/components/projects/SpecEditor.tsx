@@ -74,7 +74,8 @@ export function SpecJsonField({ defaultValue, name = "json", id = "spec-json", o
   );
 }
 
-export function SpecEditor({ action, defaultName = "", defaultJson = "", submitLabel = "Save spec" }: { action: Action; defaultName?: string; defaultJson?: string; submitLabel?: string }) {
+/** `withMessage` adds the version message: every save of a project's specs creates a version. */
+export function SpecEditor({ action, defaultName = "", defaultJson = "", submitLabel = "Save spec", withMessage = false }: { action: Action; defaultName?: string; defaultJson?: string; submitLabel?: string; withMessage?: boolean }) {
   const [state, formAction, pending] = useActionState(action, null);
   const nameId = useMemo(() => `spec-name-${Math.random().toString(36).slice(2, 8)}`, []);
   return (
@@ -84,6 +85,12 @@ export function SpecEditor({ action, defaultName = "", defaultJson = "", submitL
         <input id={nameId} name="name" className="input" defaultValue={defaultName} required maxLength={80} placeholder="e.g. au-sphere-40nm" />
       </div>
       <SpecJsonField defaultValue={defaultJson} id={`${nameId}-json`} />
+      {withMessage && (
+        <div>
+          <label className="label" htmlFor={`${nameId}-message`}>Version message <span className="font-normal text-muted">(optional)</span></label>
+          <input id={`${nameId}-message`} name="message" className="input" maxLength={500} placeholder="e.g. thicker MgF₂ layer" />
+        </div>
+      )}
       {state && (
         <p role={state.ok ? "status" : "alert"} className={`text-sm ${state.ok ? "text-success" : "text-danger"}`}>
           {state.message}

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
-import { canEditProject } from "@/lib/roles";
+import { canContribute } from "@/lib/roles";
 import { computeApi } from "@/lib/compute";
 import { computeWsBase } from "@/lib/compute/http";
 import { issuePlatformJwt } from "@/lib/platform-jwt";
@@ -21,9 +21,9 @@ export async function POST(req: Request) {
   if (!parsed.success) return Response.json({ error: "bad_request", message: parsed.error.issues[0].message }, { status: 400 });
   const { specId, method, device } = parsed.data;
 
-  const spec = await db.spec.findUnique({ where: { id: specId }, include: { project: true } });
-  if (!spec || !canEditProject(spec.project, user)) {
-    return Response.json({ error: "forbidden", message: "Only the project owner can run its specs. Fork it first." }, { status: 403 });
+  const spec = await db.spec.findUnique({ where: { id: specId }, include: { project: { include: { collaborators: { select: { userId: true } } } } } });
+  if (!spec || !canContribute(spec.project, user)) {
+    return Response.json({ error: "forbidden", message: "Only the project owner and collaborators can run its specs. Fork it first." }, { status: 403 });
   }
   const v = validateProblem(spec.json);
   if (!v.ok) return Response.json({ error: "invalid_spec", message: v.issues.map((i) => `${i.path} ${i.message}`).join("; ") }, { status: 422 });
@@ -36,7 +36,7 @@ export async function POST(req: Request) {
     const token = await issuePlatformJwt(user, "compute");
     const remote = await api.createJob({ spec: v.problem, method, device }, token);
     const job = await db.job.create({
-      data: { remoteId: remote.id, userId: user.id, projectId: spec.projectId, specId: spec.id, method, device, status: remote.status },
+      data: { remoteId: remote.id, userId: user.id, projectId: spec.projectId, specId: spec.id, versionId: spec.project.currentVersionId, method, device, status: remote.status },
     });
     return Response.json({
       jobId: job.id,

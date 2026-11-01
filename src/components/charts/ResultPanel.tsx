@@ -5,10 +5,10 @@ import { ResultViewer } from "./ResultViewer";
 import { parseResult, type AnyResult } from "@/lib/problem/result";
 
 /**
- * Loads a stored result from /api/results/{id} when it scrolls into view, then renders it.
- * Results can be megabytes (mode fields), so they are never inlined into the page HTML.
+ * Loads a stored result from /api/results/{id} (or `src`, e.g. a version's result) when it scrolls into
+ * view, then renders it. Results can be megabytes (mode fields), so they are never inlined into the page HTML.
  */
-export function ResultPanel({ resultId, title, compact = false }: { resultId: string; title: string; compact?: boolean }) {
+export function ResultPanel({ resultId, title, compact = false, src }: { resultId: string; title: string; compact?: boolean; src?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<{ status: "idle" | "loading" | "error"; error?: string } | { status: "ready"; result: AnyResult }>({ status: "idle" });
 
@@ -19,7 +19,7 @@ export function ResultPanel({ resultId, title, compact = false }: { resultId: st
     const load = async () => {
       setState({ status: "loading" });
       try {
-        const res = await fetch(`/api/results/${resultId}`);
+        const res = await fetch(src ?? `/api/results/${resultId}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const parsed = parseResult(await res.text());
         if (cancelled) return;
@@ -42,7 +42,7 @@ export function ResultPanel({ resultId, title, compact = false }: { resultId: st
       cancelled = true;
       io.disconnect();
     };
-  }, [resultId]);
+  }, [resultId, src]);
 
   return (
     <div ref={ref} aria-busy={state.status === "loading"}>

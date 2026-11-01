@@ -2,6 +2,9 @@ import "server-only";
 import { db } from "./db";
 import { canViewProject } from "./roles";
 import type { CurrentUser } from "./session";
+import { parseSnapshot } from "./versions/snapshot";
+
+const collaborators = { select: { userId: true, user: { select: { username: true, name: true } } } } as const;
 
 export async function loadProject(slug: string, viewer: CurrentUser | null) {
   const project = await db.project.findUnique({
@@ -9,9 +12,12 @@ export async function loadProject(slug: string, viewer: CurrentUser | null) {
     include: {
       owner: { select: { id: true, username: true, name: true } },
       forkedFrom: { select: { slug: true, title: true, owner: { select: { username: true } } } },
+      forkedFromVersion: { select: { number: true } },
+      currentVersion: { select: { number: true, createdAt: true } },
+      collaborators,
       specs: { orderBy: { createdAt: "asc" } },
       results: { orderBy: { createdAt: "desc" }, include: { spec: { select: { id: true, name: true } } } },
-      _count: { select: { stars: true, forks: true } },
+      _count: { select: { stars: true, forks: true, versions: true } },
     },
   });
   if (!project || !canViewProject(project, viewer)) return null;
@@ -21,13 +27,40 @@ export async function loadProject(slug: string, viewer: CurrentUser | null) {
 
 /** A spec or result is readable if its project is viewable. */
 export async function loadSpec(id: string, viewer: CurrentUser | null) {
-  const spec = await db.spec.findUnique({ where: { id }, include: { project: true } });
+  const spec = await db.spec.findUnique({ where: { id }, include: { project: { include: { collaborators } } } });
   return spec && canViewProject(spec.project, viewer) ? spec : null;
 }
 
 export async function loadResult(id: string, viewer: CurrentUser | null) {
-  const r = await db.resultRecord.findUnique({ where: { id }, include: { project: { include: { owner: { select: { username: true } } } }, spec: true } });
+  const r = await db.resultRecord.findUnique({ where: { id }, include: { project: { include: { owner: { select: { username: true } }, collaborators } }, spec: true } });
   return r && canViewProject(r.project, viewer) ? r : null;
+}
+
+/** Project header data for version pages, or null when the viewer may not see it. */
+export async function loadProjectForVersions(slug: string, viewer: CurrentUser | null) {
+  const project = await db.project.findUnique({
+    where: { slug },
+    include: { owner: { select: { id: true, username: true, name: true } }, collaborators, currentVersion: { select: { number: true } } },
+  });
+  return project && canViewProject(project, viewer) ? project : null;
+}
+
+export async function listVersions(projectId: string) {
+  const rows = await db.projectVersion.findMany({
+    where: { projectId },
+    orderBy: { number: "desc" },
+    include: { author: { select: { username: true, name: true } }, _count: { select: { results: true, forks: true } } },
+  });
+  return rows.map(({ specs, ...v }) => ({ ...v, specs: parseSnapshot(specs) }));
+}
+
+export async function loadVersion(projectId: string, number: number) {
+  if (!Number.isSafeInteger(number) || number < 1) return null;
+  const v = await db.projectVersion.findUnique({
+    where: { projectId_number: { projectId, number } },
+    include: { author: { select: { username: true, name: true } }, results: { orderBy: { createdAt: "desc" } } },
+  });
+  return v ? { ...v, specs: parseSnapshot(v.specs) } : null;
 }
 
 export function parseTags(input: string): string {

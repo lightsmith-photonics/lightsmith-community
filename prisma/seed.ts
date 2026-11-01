@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PrismaClient } from "@prisma/client";
 import { saveResult } from "../src/lib/results-store";
+import { commit } from "../src/lib/versions/store";
 import { parseResult } from "../src/lib/problem/result";
 import { mockSolve } from "../src/lib/problem/mock-solver";
 import { mockNkLookup } from "../src/lib/materials/mock";
@@ -32,6 +33,7 @@ async function project(input: {
   visibility?: string;
   createdAt?: Date;
   forkedFromId?: string;
+  forkedFromVersionId?: string;
   demos: { spec: string; name: string; resultName?: string }[];
 }) {
   const p = await db.project.create({
@@ -45,19 +47,25 @@ async function project(input: {
       visibility: input.visibility ?? "public",
       createdAt: input.createdAt,
       forkedFromId: input.forkedFromId,
+      forkedFromVersionId: input.forkedFromVersionId,
     },
   });
-  const results = [];
+  const specs = [];
   for (const d of input.demos) {
     const problem = spec(d.spec);
-    const s = await db.spec.create({ data: { projectId: p.id, name: d.name, kind: String(problem.kind ?? "scattering"), json: pretty(problem) } });
-    if (d.resultName) results.push(await saveResult({ projectId: p.id, specId: s.id, name: d.resultName, result: result(d.spec) }));
+    specs.push(await db.spec.create({ data: { projectId: p.id, name: d.name, kind: String(problem.kind ?? "scattering"), json: pretty(problem) } }));
   }
-  return { ...p, results };
+  // v1 holds the specs; results saved afterwards are linked to it.
+  const { version } = await commit({ projectId: p.id, authorId: input.ownerId, message: input.forkedFromId ? "Forked" : "Initial version" });
+  const results = [];
+  for (const [i, d] of input.demos.entries()) {
+    if (d.resultName) results.push(await saveResult({ projectId: p.id, specId: specs[i].id, name: d.resultName, result: result(d.spec) }));
+  }
+  return { ...p, results, version };
 }
 
 async function main() {
-  for (const t of ["notification", "flag", "vote", "post", "thread", "forumCategory", "star", "job", "resultRecord", "spec", "project", "materialSubmission", "account", "session", "verificationToken", "user"] as const) {
+  for (const t of ["notification", "flag", "vote", "post", "thread", "forumCategory", "star", "versionResult", "projectCollaborator", "job", "projectVersion", "resultRecord", "spec", "project", "materialSubmission", "account", "session", "verificationToken", "user"] as const) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (db as any)[t].deleteMany();
   }
@@ -142,6 +150,7 @@ Expect $n_{eff} \\approx 2.4$ and $n_g \\approx 4.2$ for the fundamental TE-like
     wavelengths: { start_nm: 400, stop_nm: 800, num: 81 },
   };
   const goldSpecRow = await db.spec.create({ data: { projectId: gold.id, name: "au-jc-sphere-40nm", kind: "scattering", json: pretty(goldLibrary) } });
+  await commit({ projectId: gold.id, authorId: mie.id, message: "Add the Johnson-Christy gold sphere" });
   const goldFields = await saveResult({ projectId: gold.id, specId: goldSpecRow.id, name: "Johnson-Christy, near and far field (mock)", result: mockSolve(goldLibrary, { lookup: mockNkLookup }) });
 
   const fork = await project({
@@ -152,6 +161,7 @@ Expect $n_{eff} \\approx 2.4$ and $n_g \\approx 4.2$ for the fundamental TE-like
     ownerId: maxwell.id,
     visibility: "unlisted",
     forkedFromId: wg.id,
+    forkedFromVersionId: wg.version.id,
     createdAt: days(5),
     demos: [{ spec: "mode", name: "si-strip-500x220" }],
   });

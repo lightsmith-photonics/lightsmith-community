@@ -22,7 +22,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const existing = await db.resultRecord.findFirst({ where: { projectId: job.projectId, name: { endsWith: tag } } });
   if (existing) return Response.json({ resultId: existing.id });
   const result = state.result;
-  const record = await saveResult({ projectId: job.projectId, specId: job.specId, name: `${job.spec.name} · ${result.method} ${tag}`, result });
+  const record = await saveResult({ projectId: job.projectId, specId: job.specId, name: `${job.spec.name} · ${result.method} ${tag}`, result, versionId: job.versionId });
   const project = await db.project.update({ where: { id: job.projectId }, data: { updatedAt: new Date() }, select: { slug: true } });
   revalidatePath(`/p/${project.slug}`);
   return Response.json({ resultId: record.id });

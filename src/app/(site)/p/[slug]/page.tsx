@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCurrentUser } from "@/lib/session";
 import { loadProject } from "@/lib/projects";
-import { canEditProject } from "@/lib/roles";
+import { canContribute, canEditProject } from "@/lib/roles";
 import { env, computeMocked } from "@/lib/env";
 import { brand } from "@/lib/brand";
 import { studioLink } from "@/lib/studio";
@@ -42,7 +42,10 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
   const me = await getCurrentUser();
   const p = await loadProject(slug, me);
   if (!p) notFound();
-  const canEdit = canEditProject(p, me);
+  const isOwner = canEditProject(p, me);
+  // Owner and collaborators change specs and results; every spec save is a new version.
+  const canEdit = canContribute(p, me);
+  const version = p.currentVersion?.number;
   const permalink = `${env.siteUrl}/p/${p.slug}`;
   const mocked = computeMocked();
 
@@ -53,6 +56,12 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
           <div>
             <p className="text-sm text-muted">
               <Link href={`/u/${p.owner.username}`} className="hover:underline">@{p.owner.username}</Link> / <span className="badge">{p.visibility}</span>
+              {version && (
+                <>
+                  {" "}
+                  <Link className="badge hover:text-fg" href={`/p/${p.slug}/v/${version}`} aria-label={`Current version v${version}`}>v{version}</Link>
+                </>
+              )}
             </p>
             <h1 className="mt-1 text-3xl font-bold">{p.title}</h1>
             {p.forkedFrom && (
@@ -61,6 +70,23 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
                 <Link className="link" href={`/p/${p.forkedFrom.slug}`}>
                   @{p.forkedFrom.owner.username}/{p.forkedFrom.title}
                 </Link>
+                {p.forkedFromVersion && (
+                  <>
+                    {" "}
+                    <Link className="link" href={`/p/${p.forkedFrom.slug}/v/${p.forkedFromVersion.number}`}>v{p.forkedFromVersion.number}</Link>
+                  </>
+                )}
+              </p>
+            )}
+            {p.collaborators.length > 0 && (
+              <p className="mt-1 text-sm text-muted">
+                With{" "}
+                {p.collaborators.map((c, i) => (
+                  <span key={c.userId}>
+                    {i > 0 && ", "}
+                    <Link className="hover:underline" href={`/u/${c.user.username}`}>@{c.user.username}</Link>
+                  </span>
+                ))}
               </p>
             )}
             {p.description && <p className="mt-2 max-w-prose text-muted">{p.description}</p>}
@@ -86,14 +112,17 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
                 ☆ Star <span className="badge">{p._count.stars}</span>
               </Link>
             )}
+            <Link className="btn" href={`/p/${p.slug}/versions`}>
+              History <span className="badge">{p._count.versions}</span>
+            </Link>
             {me && (
-              <form action={forkProject.bind(null, p.id)}>
+              <form action={forkProject.bind(null, p.id, null)}>
                 <button className="btn" type="submit">
                   Fork <span className="badge">{p._count.forks}</span>
                 </button>
               </form>
             )}
-            {canEdit && <Link className="btn" href={`/p/${p.slug}/settings`}>Settings</Link>}
+            {isOwner && <Link className="btn" href={`/p/${p.slug}/settings`}>Settings</Link>}
           </div>
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
@@ -155,7 +184,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
                     <details className="mt-3">
                       <summary className="cursor-pointer text-sm text-muted">Edit</summary>
                       <div className="mt-2">
-                        <SpecEditor action={saveSpec.bind(null, p.id, s.id)} defaultName={s.name} defaultJson={s.json} submitLabel="Update spec" />
+                        <SpecEditor action={saveSpec.bind(null, p.id, s.id)} defaultName={s.name} defaultJson={s.json} submitLabel="Update spec" withMessage />
                       </div>
                     </details>
                   </>
@@ -169,7 +198,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
           <details className="card mt-4">
             <summary className="cursor-pointer font-medium">Add a spec</summary>
             <div className="mt-3">
-              <SpecEditor action={saveSpec.bind(null, p.id, null)} submitLabel="Add spec" />
+              <SpecEditor action={saveSpec.bind(null, p.id, null)} submitLabel="Add spec" withMessage />
             </div>
           </details>
         )}
@@ -233,7 +262,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
 
       <section className="mt-10" aria-labelledby="notes">
         <h2 id="notes" className="text-xl font-semibold">Notes</h2>
-        {p.notes ? <Markdown className="mt-3">{p.notes}</Markdown> : <p className="mt-2 text-sm text-muted">No notes.{canEdit && " Add some in Settings."}</p>}
+        {p.notes ? <Markdown className="mt-3">{p.notes}</Markdown> : <p className="mt-2 text-sm text-muted">No notes.{isOwner && " Add some in Settings."}</p>}
       </section>
     </div>
   );

@@ -3,7 +3,7 @@ import { db } from "./db";
 export async function notify(input: {
   userId: string;
   actorId?: string | null;
-  type: "mention" | "reply" | "accepted" | "star" | "fork" | "moderation" | "submission";
+  type: "mention" | "reply" | "accepted" | "star" | "fork" | "collaborator" | "moderation" | "submission";
   message: string;
   url: string;
 }) {

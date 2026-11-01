@@ -115,11 +115,41 @@ npm run fixtures:schema && npm run fixtures:demo && npm run fixtures:materials
 | Materials explorer | `/materials`, `/materials/[id]`, `/materials/datasets/[id]`, `/materials/compare`, `/materials/contribute` | `src/lib/materials`, `src/components/materials` |
 | Moderation | `/moderation`, `/moderation/materials`, `/moderation/forum`, `/moderation/users` | |
 | Projects | `/projects`, `/projects/new`, `/p/[slug]` (permalink and preview image), `/p/[slug]/settings` | `src/app/(site)/p/actions.ts`, `src/lib/results-store.ts` |
+| Versions | `/p/[slug]/versions` (history), `/p/[slug]/v/[n]` (permalink), `/p/[slug]/diff?from=&to=`, `/api/projects/[slug]/…` | `src/lib/versions`, `src/components/charts/ResultOverlay.tsx` |
 | Embeds and raw JSON | `/embed/results/[id]` (frameable), `/api/specs/[id]`, `/api/results/[id]` | `src/components/charts` |
 | Runs | `/api/jobs`, `/api/jobs/[id]`, `/api/jobs/[id]/complete` | `src/components/projects/RunButton.tsx` |
 | Forum | `/forum`, `/forum/[category]`, `/forum/t/[id]`, `/forum/new`, `/forum/search` | `src/app/(site)/forum/actions.ts`, `src/lib/forum` |
 | Landing, docs, pricing | `/`, `/docs`, `/docs/spec` (generated from the schema), `/docs/agents`, `/docs/platform`, `/pricing` | |
 | Health | `/api/health` (database and object storage) | |
+
+## Project versions
+
+Every save of a project's specs (adding, editing or deleting one, restoring, forking) commits an immutable version: number, author,
+message, a snapshot of all the project's specs, and the results linked to it. The project points at its current version.
+
+- **Results** are linked to the version whose specs produced them (a job remembers the version it was submitted at) and are carried
+  to later versions while their spec is unchanged. A version keeps its own reference to the stored object, so deleting a result
+  from the project does not remove it from history; the object is deleted with its last reference.
+- **Restore** makes an old version current again as a new version (history is never rewritten). **Fork** copies the project as it
+  is, or a specific version, into your account; the fork shows "forked from @owner/project v3".
+- **Diff** compares two versions' specs field by field, with the unit taken from the property name (`thickness_nm`, `angle_deg`,
+  `wp_ev`), and overlays spectra and cross-section results of the same spec (earlier version dashed).
+- **Who may do what:** anyone who can see a project can read its versions (public and unlisted: everyone; private: the owner,
+  collaborators and admins). The owner and collaborators (added in the project settings) create versions, restore and run specs;
+  only the owner changes settings and collaborators.
+
+| API | |
+|---|---|
+| `GET /api/projects/{slug}/versions` | History, newest first |
+| `POST /api/projects/{slug}/versions` | `{specs: [{id?, name, problem}], message?, base?}`: the full spec set of the new version; `base` (the version you edited) gives 409 if it is stale |
+| `GET /api/projects/{slug}/versions/{n}` | One version with its specs and results |
+| `GET /api/projects/{slug}/versions/{n}/specs/{i}` | Raw problem JSON (CORS; used by "Open in Studio") |
+| `GET /api/projects/{slug}/versions/{n}/results/{id}` | Result JSON (gzip) |
+| `POST /api/projects/{slug}/versions/{n}/restore` | `{message?}` |
+| `GET /api/projects/{slug}/diff?from=&to=` | Structured spec diff |
+| `POST /api/projects/{slug}/fork` | `{version?}` |
+
+POST routes take JSON bodies only and use the session cookie. Private projects answer 404 to anyone who may not see them.
 
 ## Accessibility and theming
 

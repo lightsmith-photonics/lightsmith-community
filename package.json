@@ -1,0 +1,69 @@
+{
+  "name": "lightsmith-community",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Lightsmith Community: shared photonics projects, a materials explorer and a forum.",
+  "engines": {
+    "node": ">=20.9"
+  },
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "lint": "tsc --noEmit",
+    "services:up": "docker compose up -d --wait postgres s3 mailpit",
+    "services:down": "docker compose down",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:new": "prisma migrate dev --create-only --name",
+    "db:seed": "tsx prisma/seed.ts",
+    "fixtures:materials": "uv run --project ../PlasmonHub --with pyyaml python scripts/build_material_fixtures.py",
+    "fixtures:demo": "uv run --project ../PlasmonHub python scripts/build_demo_results.py",
+    "fixtures:schema": "uv run --project ../PlasmonHub lightsmith schema > fixtures/problem-schema.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@auth/prisma-adapter": "^2.10.0",
+    "@aws-sdk/client-s3": "^3.1161.0",
+    "@prisma/client": "~6.19.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "jose": "^6.1.0",
+    "js-yaml": "^4.1.0",
+    "katex": "^0.16.22",
+    "next": "~15.5.4",
+    "next-auth": "5.0.0-beta.32",
+    "nodemailer": "^7.0.7",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "server-only": "^0.0.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.55.0",
+    "@tailwindcss/postcss": "^4.1.13",
+    "@tailwindcss/typography": "^0.5.16",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.19.0",
+    "@types/nodemailer": "^7.0.1",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "prisma": "~6.19.0",
+    "tailwindcss": "^4.1.13",
+    "tsx": "^4.20.0",
+    "typescript": "~5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  }
+}

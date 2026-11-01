@@ -1,0 +1,33 @@
+import type { NextConfig } from "next";
+
+const securityHeaders = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+];
+
+const nextConfig: NextConfig = {
+  // The Docker image sets NEXT_OUTPUT=standalone; `next start` needs the default output.
+  output: process.env.NEXT_OUTPUT === "standalone" ? "standalone" : undefined,
+  poweredByHeader: false,
+  async headers() {
+    return [
+      // Everything except /embed/* may not be framed by other sites.
+      {
+        source: "/((?!embed/).*)",
+        headers: [...securityHeaders, { key: "Content-Security-Policy", value: "frame-ancestors 'self'" }],
+      },
+      {
+        source: "/embed/:path*",
+        headers: [...securityHeaders, { key: "Content-Security-Policy", value: "frame-ancestors *" }],
+      },
+      // Specs are fetched by apps/studio from another origin.
+      {
+        source: "/api/specs/:id",
+        headers: [{ key: "Access-Control-Allow-Origin", value: "*" }],
+      },
+    ];
+  },
+};
+
+export default nextConfig;

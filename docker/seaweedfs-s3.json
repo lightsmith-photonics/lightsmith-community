@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "lightsmith",
+      "credentials": [{ "accessKey": "lightsmith", "secretKey": "lightsmith-dev-secret" }],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

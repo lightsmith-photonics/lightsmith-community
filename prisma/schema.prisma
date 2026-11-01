@@ -1,0 +1,296 @@
+// Lightsmith Community data model (PostgreSQL). Change it with `npm run db:migrate:new -- <name>`,
+// which writes a migration under prisma/migrations; deploys apply them with `prisma migrate deploy`.
+// Large result payloads live in object storage (S3/MinIO); rows keep a key and a small preview.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Auth.js ----------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  username      String?   @unique
+  affiliation   String?
+  orcid         String?
+  bio           String?
+  /// "user" | "moderator" | "admin"
+  role          String    @default("user")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  projects      Project[]
+  stars         Star[]
+  threads       Thread[]
+  posts         Post[]
+  votes         Vote[]
+  flags         Flag[]               @relation("FlagReporter")
+  notifications Notification[]       @relation("NotificationRecipient")
+  actedNotifs   Notification[]       @relation("NotificationActor")
+  submissions   MaterialSubmission[]
+  jobs          Job[]
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+// ---------- Projects ----------
+
+model Project {
+  id           String    @id @default(cuid())
+  slug         String    @unique
+  title        String
+  description  String    @default("")
+  /// Markdown notes
+  notes        String    @default("")
+  /// "public" | "unlisted" | "private"
+  visibility   String    @default("public")
+  /// comma-separated lower-case tags
+  tags         String    @default("")
+  ownerId      String
+  owner        User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  forkedFromId String?
+  forkedFrom   Project?  @relation("Forks", fields: [forkedFromId], references: [id], onDelete: SetNull)
+  forks        Project[] @relation("Forks")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  specs   Spec[]
+  results ResultRecord[]
+  stars   Star[]
+  jobs    Job[]
+
+  @@index([ownerId])
+  @@index([visibility, updatedAt])
+}
+
+model Spec {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+  /// problem kind: scattering | layer_stack | periodic | mode | device | bands | circuit | optimization
+  kind      String   @default("scattering")
+  /// problem JSON, validated against fixtures/problem-schema.json
+  json      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  results     ResultRecord[]
+  attachments Post[]
+  jobs        Job[]
+
+  @@index([projectId])
+}
+
+model ResultRecord {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  specId    String?
+  spec      Spec?    @relation(fields: [specId], references: [id], onDelete: SetNull)
+  name       String
+  /// result kind: cross_sections | spectrum | modes | sparameters | bands
+  kind       String   @default("cross_sections")
+  method     String
+  backend    String
+  /// object-storage key of the gzipped result JSON
+  storageKey String
+  sizeBytes  Int
+  /// small JSON digest (headline numbers + a downsampled curve) for lists and preview images
+  preview    String
+  createdAt  DateTime @default(now())
+
+  attachments Post[]
+
+  @@index([projectId])
+}
+
+model Star {
+  userId    String
+  projectId String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, projectId])
+}
+
+model Job {
+  id        String   @id @default(cuid())
+  /// id assigned by Lightsmith Cloud (lightsmith-cloud) (or the mock runner)
+  remoteId  String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  specId    String
+  spec      Spec     @relation(fields: [specId], references: [id], onDelete: Cascade)
+  method    String   @default("auto")
+  device    String   @default("auto")
+  /// "queued" | "running" | "succeeded" | "failed" | "cancelled"
+  status    String   @default("queued")
+  error     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId])
+}
+
+// ---------- Materials (local mirror of submissions sent to Lightsmith Materials (lightsmith-materials)) ----------
+
+model MaterialSubmission {
+  id        String   @id @default(cuid())
+  remoteId  String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  material  String
+  title     String
+  /// "pending" | "approved" | "rejected"
+  status    String   @default("pending")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------- Forum ----------
+
+model ForumCategory {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String   @default("")
+  position    Int      @default(0)
+  threads     Thread[]
+}
+
+model Thread {
+  id             String        @id @default(cuid())
+  categoryId     String
+  category       ForumCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  authorId       String
+  author         User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  title          String
+  locked         Boolean       @default(false)
+  pinned         Boolean       @default(false)
+  deletedAt      DateTime?
+  acceptedPostId String?       @unique
+  acceptedPost   Post?         @relation("AcceptedAnswer", fields: [acceptedPostId], references: [id], onDelete: SetNull)
+  createdAt      DateTime      @default(now())
+  lastActivityAt DateTime      @default(now())
+
+  posts Post[] @relation("ThreadPosts")
+
+  @@index([categoryId, lastActivityAt])
+}
+
+model Post {
+  id               String        @id @default(cuid())
+  threadId         String
+  thread           Thread        @relation("ThreadPosts", fields: [threadId], references: [id], onDelete: Cascade)
+  authorId         String
+  author           User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  /// Markdown with $LaTeX$
+  body             String
+  score            Int           @default(0)
+  attachedSpecId   String?
+  attachedSpec     Spec?         @relation(fields: [attachedSpecId], references: [id], onDelete: SetNull)
+  attachedResultId String?
+  attachedResult   ResultRecord? @relation(fields: [attachedResultId], references: [id], onDelete: SetNull)
+  deletedAt        DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  votes       Vote[]
+  flags       Flag[]
+  acceptedFor Thread? @relation("AcceptedAnswer")
+
+  @@index([threadId, createdAt])
+}
+
+model Vote {
+  userId    String
+  postId    String
+  /// +1 or -1
+  value     Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, postId])
+}
+
+model Flag {
+  id           String    @id @default(cuid())
+  postId       String
+  post         Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  reporterId   String
+  reporter     User      @relation("FlagReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reason       String
+  /// "open" | "resolved" | "dismissed"
+  status       String    @default("open")
+  resolvedById String?
+  createdAt    DateTime  @default(now())
+  resolvedAt   DateTime?
+
+  @@index([status])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  actorId   String?
+  actor     User?     @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  /// "mention" | "reply" | "accepted" | "star" | "fork" | "moderation" | "submission"
+  type      String
+  message   String
+  url       String
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+}

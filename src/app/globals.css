@@ -1,0 +1,158 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+/* Theme: semantic colour tokens as CSS variables, switched by [data-theme] on <html>.
+   All foreground/background pairs below meet WCAG AA (4.5:1 for text). */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  --bg: #ffffff;
+  --surface: #f6f7f9;
+  --surface-2: #eceef2;
+  --fg: #11151c;
+  --muted: #4a5261;
+  --line: #d5d9e0;
+  --accent: #4338ca;
+  --accent-fg: #ffffff;
+  --accent-soft: #e8e7fb;
+  --danger: #b42318;
+  --success: #067647;
+  --warning: #93370d;
+  --focus: #2563eb;
+  --plot-1: #4338ca;
+  --plot-2: #c2410c;
+  --plot-3: #047857;
+  --plot-4: #a21caf;
+  --plot-5: #0369a1;
+  --plot-6: #a16207;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #0b0d12;
+  --surface: #141821;
+  --surface-2: #1d2230;
+  --fg: #e8eaf0;
+  --muted: #a3abba;
+  --line: #2e3545;
+  --accent: #a5b4fc;
+  --accent-fg: #11151c;
+  --accent-soft: #23264a;
+  --danger: #f97066;
+  --success: #47cd89;
+  --warning: #fdb022;
+  --focus: #93c5fd;
+  --plot-1: #a5b4fc;
+  --plot-2: #fb923c;
+  --plot-3: #34d399;
+  --plot-4: #f0abfc;
+  --plot-5: #7dd3fc;
+  --plot-6: #fde047;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "Cascadia Code", Menlo, Consolas, monospace;
+}
+
+html {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-transparent bg-accent px-3 py-1.5 text-sm font-semibold text-accent-fg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-danger px-3 py-1.5 text-sm font-medium text-danger hover:bg-surface-2;
+  }
+  .input {
+    @apply w-full rounded-md border border-line bg-bg px-3 py-2 text-sm text-fg placeholder:text-muted;
+  }
+  .label {
+    @apply mb-1 block text-sm font-medium text-fg;
+  }
+  .card {
+    @apply rounded-lg border border-line bg-surface p-4;
+  }
+  .link {
+    @apply text-accent underline underline-offset-2 hover:no-underline;
+  }
+  .badge {
+    @apply inline-flex items-center rounded-full border border-line bg-surface-2 px-2 py-0.5 text-xs font-medium text-muted;
+  }
+  .container-page {
+    @apply mx-auto w-full max-w-6xl px-4 sm:px-6;
+  }
+}
+
+/* Markdown (forum posts, notes) */
+.prose-os {
+  @apply prose max-w-none dark:prose-invert;
+  --tw-prose-body: var(--fg);
+  --tw-prose-headings: var(--fg);
+  --tw-prose-links: var(--accent);
+  --tw-prose-code: var(--fg);
+  --tw-prose-pre-bg: var(--surface-2);
+  --tw-prose-pre-code: var(--fg);
+  --tw-prose-invert-body: var(--fg);
+  --tw-prose-invert-headings: var(--fg);
+  --tw-prose-invert-links: var(--accent);
+  --tw-prose-invert-code: var(--fg);
+  --tw-prose-invert-pre-bg: var(--surface-2);
+  --tw-prose-invert-pre-code: var(--fg);
+}
+.prose-os pre {
+  border: 1px solid var(--line);
+}
+.prose-os .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0;
+}
+
+/* highlight.js tokens using theme-aware colours */
+.hljs-keyword, .hljs-built_in, .hljs-selector-tag { color: var(--plot-4); }
+.hljs-string, .hljs-attr { color: var(--plot-3); }
+.hljs-number, .hljs-literal { color: var(--plot-2); }
+.hljs-comment { color: var(--muted); font-style: italic; }
+.hljs-title, .hljs-function { color: var(--plot-5); }

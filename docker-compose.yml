@@ -1,0 +1,104 @@
+# Lightsmith Community: the web app with PostgreSQL, S3-compatible object storage and Mailpit.
+#
+#   cp .env.example .env
+#   docker compose up --build -d          # web on http://localhost:3000, mail UI on http://localhost:58025
+#   docker compose --profile seed run --rm seed   # optional demo data (wipes the app's tables)
+#   docker compose down -v                # stop and delete volumes
+#
+# For `npm run dev` on the host, start only the backing services: npm run services:up
+# Host ports default to uncommon values (postgres 54320, S3 59000, SMTP 51025, mail UI 58025) so the
+# stack runs next to other local databases; override with POSTGRES_PORT, S3_PORT, MAILPIT_*_PORT, WEB_PORT.
+
+name: lightsmith-community
+
+x-app-env: &app-env
+  DATABASE_URL: postgresql://lightsmith:lightsmith@postgres:5432/lightsmith
+  S3_ENDPOINT: http://s3:8333
+  S3_REGION: us-east-1
+  S3_BUCKET: lightsmith-community
+  S3_ACCESS_KEY_ID: lightsmith
+  S3_SECRET_ACCESS_KEY: lightsmith-dev-secret
+  S3_FORCE_PATH_STYLE: "true"
+  S3_CREATE_BUCKET: "true"
+
+services:
+  postgres:
+    image: postgres:16.10-bookworm
+    environment:
+      POSTGRES_USER: lightsmith
+      POSTGRES_PASSWORD: lightsmith
+      POSTGRES_DB: lightsmith
+    ports: ["${POSTGRES_PORT:-54320}:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/10-e2e.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lightsmith -d lightsmith"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # S3-compatible object storage (SeaweedFS S3 gateway). Any S3 service works in production.
+  s3:
+    image: chrislusf/seaweedfs:3.97
+    command: ["server", "-dir=/data", "-s3", "-s3.port=8333", "-s3.config=/etc/seaweedfs/s3.json", "-master.volumeSizeLimitMB=256"]
+    ports: ["${S3_PORT:-59000}:8333"]
+    volumes:
+      - s3data:/data
+      - ./docker/seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  mailpit:
+    image: axllent/mailpit:v1.27.7
+    ports: ["${MAILPIT_SMTP_PORT:-51025}:1025", "${MAILPIT_UI_PORT:-58025}:8025"]
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: { context: ., target: migrate }
+    environment:
+      DATABASE_URL: postgresql://lightsmith:lightsmith@postgres:5432/lightsmith
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  web:
+    build: { context: ., target: runner }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *app-env
+      SITE_URL: http://localhost:3000
+      AUTH_URL: http://localhost:3000
+      AUTH_SECRET: ${AUTH_SECRET:-dev-only-auth-secret-change-me}
+      EMAIL_SERVER: smtp://mailpit:1025
+    ports: ["${WEB_PORT:-3000}:3000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      s3: { condition: service_healthy }
+      mailpit: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  seed:
+    profiles: ["seed"]
+    build: { context: ., target: seed }
+    environment:
+      <<: *app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      s3: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    restart: "no"
+
+volumes:
+  pgdata:
+  s3data:

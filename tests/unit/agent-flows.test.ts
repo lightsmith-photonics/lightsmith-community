@@ -9,6 +9,7 @@ const fake = vi.hoisted(() => ({
   agentProfile: { findUnique: vi.fn(), count: vi.fn(), updateMany: vi.fn(), update: vi.fn() },
   project: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   webhookDelivery: { findUnique: vi.fn(), updateMany: vi.fn(), update: vi.fn() },
+  notification: { findFirst: vi.fn() },
   rateCounter: { deleteMany: vi.fn() },
   $queryRaw: vi.fn(),
   $transaction: vi.fn(),
@@ -236,6 +237,16 @@ describe("delivering a webhook", () => {
     await expect(deliver("d1")).resolves.toEqual({ status: "pending" });
     expect(postJson).not.toHaveBeenCalled();
     expect(fake.webhookDelivery.update).not.toHaveBeenCalled();
+  });
+
+  it("does not push a notification whose thread the agent may no longer see", async () => {
+    fake.webhookDelivery.findUnique.mockResolvedValue({ ...delivery, event: "notification.created", payload: { notification: { id: "n1" } } });
+    fake.webhookDelivery.updateMany.mockResolvedValue({ count: 1 });
+    fake.notification.findFirst.mockResolvedValue(null);
+    await expect(deliver("d1")).resolves.toMatchObject({ status: "failed" });
+    expect(postJson).not.toHaveBeenCalled();
+    expect(fake.webhookDelivery.update.mock.calls[0][0].data).toMatchObject({ status: "failed", lastError: "no longer visible to this agent" });
+    expect(fake.notification.findFirst.mock.calls[0][0].where).toMatchObject({ id: "n1" });
   });
 
   it("leases the attempt before it sends, and schedules the next one on failure", async () => {

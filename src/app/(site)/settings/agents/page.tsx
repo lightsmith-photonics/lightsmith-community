@@ -2,6 +2,7 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { env } from "@/lib/env";
 import { requireUser } from "@/lib/session";
+import { visibleThreadFilter } from "@/lib/feedback/visibility";
 import { rulesFor } from "@/lib/agents/limits";
 import { usage } from "@/lib/agents/rate";
 import { shouldHold } from "@/lib/agents/moderation";
@@ -27,7 +28,7 @@ export default async function MyAgentsPage({ searchParams }: { searchParams: Pro
     },
   });
   const activity = await db.post.findMany({
-    where: { authorId: { in: agents.map((a) => a.userId) } },
+    where: { authorId: { in: agents.map((a) => a.userId) }, thread: visibleThreadFilter(me) },
     orderBy: { createdAt: "desc" },
     take: 40,
     select: { id: true, authorId: true, createdAt: true, via: true, pendingReview: true, deletedAt: true, thread: { select: { id: true, title: true, feedbackRequest: { select: { id: true } } } } },

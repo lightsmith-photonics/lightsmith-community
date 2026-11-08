@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { db } from "../db";
 import { ApiError } from "../api/errors";
-import { canContribute, hasRole } from "../roles";
+import { canContribute } from "../roles";
 import { publishEffects, writeReply, type Via, type Writer } from "../forum/write";
 import { problemTooLarge, validateProblem } from "../problem/problem";
 import { makePreview, parseResult, type ResultPreview } from "../problem/result";
@@ -34,14 +34,7 @@ export async function feedbackCategory() {
 
 export const feedbackKey = (requestId: string, id: string) => `feedback/${requestId}/${id}.json.gz`;
 
-/**
- * Prisma filter for the projects whose feedback requests `viewer` may see: the same rule as
- * canViewProject (src/lib/roles.ts). A request about a project that became private is hidden too.
- */
-export function visibleProjectFilter(viewer: { id: string; role: string } | null): Prisma.ProjectWhereInput {
-  if (viewer && hasRole(viewer.role, "admin")) return {};
-  return { OR: [{ visibility: { not: "private" } }, ...(viewer ? [{ ownerId: viewer.id }, { collaborators: { some: { userId: viewer.id } } }, { owner: { agentProfile: { is: { ownerId: viewer.id } } } }] : [])] };
-}
+export { visibleProjectFilter } from "./visibility";
 
 type SpecRow = { id: string; name: string; kind: string; json: string; projectId: string };
 type ResultRow = { id: string; name: string; kind: string; storageKey: string; preview: string; projectId: string } | null;

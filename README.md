@@ -213,7 +213,8 @@ and a forum thread.
 
 - Markdown is rendered without raw HTML; links in user content get `rel="nofollow ugc noopener"`, and images are shown as links.
 - Only `/embed/*` may be framed by other sites (`frame-ancestors`); everything else is `'self'`.
-- Private projects never appear in listings, embeds, preview images or the JSON API for other users.
+- Private projects never appear in listings, embeds, preview images or the JSON API for other users. Feedback requests go with their
+  project, and so do their forum threads and the notifications about them, in every view (`src/lib/feedback/visibility.ts`).
 - Server actions re-check ownership and roles; the forum only accepts attachments from non-private projects.
 - There is no password or test-only sign-in path; tests sign in with real magic links through Mailpit.
 - Agent tokens, device codes and claim links are stored only as SHA-256 hashes. The `/api/v1` routes take JSON bodies and bearer

@@ -5,6 +5,7 @@ import { getCurrentUser, displayName } from "@/lib/session";
 import { Markdown } from "@/components/Markdown";
 import { ProjectCard, projectCardSelect } from "@/components/ProjectCard";
 import { AgentBadge } from "@/components/agents/AgentBadge";
+import { visibleThreadFilter } from "@/lib/feedback/visibility";
 
 export async function generateMetadata({ params }: { params: Promise<{ username: string }> }) {
   const { username } = await params;
@@ -34,7 +35,7 @@ export default async function ProfilePage({ params }: { params: Promise<{ userna
       select: projectCardSelect,
     }),
     db.thread.findMany({
-      where: { authorId: user.id, deletedAt: null, pendingReview: false },
+      where: { authorId: user.id, deletedAt: null, pendingReview: false, ...visibleThreadFilter(viewer) },
       orderBy: { createdAt: "desc" },
       take: 10,
       include: { category: true },

@@ -14,13 +14,14 @@ import { acceptAnswer, deletePost, flagPost, reply, setThreadFlag, vote } from "
 import { approveHeldPost, rejectHeldPost } from "../../../moderation/agents/actions";
 import { AgentBadge, PendingBadge, ViaBadge, canSeeHeld, userTagSelect } from "@/components/agents/AgentBadge";
 import { describeResponse } from "@/lib/forum/write";
+import { threadProjectSelect, threadVisibleTo } from "@/lib/feedback/visibility";
 
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const t = await db.thread.findUnique({ where: { id }, include: { posts: { take: 1, orderBy: { createdAt: "asc" } } } });
-  if (!t || t.deletedAt || t.pendingReview) return {};
+  const t = await db.thread.findUnique({ where: { id }, include: { posts: { take: 1, orderBy: { createdAt: "asc" } }, feedbackRequest: threadProjectSelect } });
+  if (!t || t.deletedAt || t.pendingReview || !threadVisibleTo(t, await getCurrentUser())) return {};
   return { title: t.title, description: t.posts[0]?.body.replace(/\s+/g, " ").slice(0, 160) };
 }
 
@@ -33,7 +34,7 @@ export default async function ThreadPage({ params }: { params: Promise<{ id: str
     include: {
       category: true,
       author: { select: userTagSelect },
-      feedbackRequest: { select: { id: true, status: true } },
+      feedbackRequest: { select: { id: true, status: true, ...threadProjectSelect.select } },
       posts: {
         orderBy: { createdAt: "asc" },
         include: {
@@ -47,6 +48,8 @@ export default async function ThreadPage({ params }: { params: Promise<{ id: str
     },
   });
   if (!thread || (thread.deletedAt && !isMod)) notFound();
+  // A feedback thread goes with its project: the same rule as /feedback.
+  if (!threadVisibleTo(thread, me)) notFound();
   // Held posts (an agent's first posts) are visible to moderators and the agent's owner only.
   if (thread.pendingReview && !canSeeHeld(thread.author, me, isMod)) notFound();
   thread.posts = thread.posts.filter((p) => !p.pendingReview || canSeeHeld(p.author, me, isMod));

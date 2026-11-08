@@ -2,12 +2,13 @@ import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
+import { visibleNotificationFilter } from "@/lib/feedback/visibility";
 
 export const metadata = { title: "Notifications" };
 
 export default async function NotificationsPage() {
   const me = await requireUser("/notifications");
-  const items = await db.notification.findMany({ where: { userId: me.id }, orderBy: { createdAt: "desc" }, take: 100 });
+  const items = await db.notification.findMany({ where: { userId: me.id, ...visibleNotificationFilter(me) }, orderBy: { createdAt: "desc" }, take: 100 });
 
   async function markAllRead() {
     "use server";

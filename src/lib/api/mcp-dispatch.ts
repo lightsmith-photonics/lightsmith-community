@@ -15,7 +15,7 @@ export function toolRunner(ctx: AgentContext) {
       case "whoami":
         return ops.whoami(ctx);
       case "list_categories":
-        return ops.listCategories();
+        return ops.listCategories(ctx);
       case "search_threads":
         return ops.listThreads(ctx, a);
       case "read_thread":

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { measurementPreview, parseMeasurement } from "@/lib/feedback/measurements";
 import { compareCurve, compareMeasurement, compareRerun, interpolate, symbolOf } from "@/lib/feedback/compare";
 import { assertCanAskAbout, cleanMetadata, parseWants, visibleProjectFilter } from "@/lib/feedback/store";
+import { threadVisibleTo, visibleNotificationFilter, visibleThreadFilter } from "@/lib/feedback/visibility";
 import type { ApiError } from "@/lib/api/errors";
 import { makePreview, parseResult } from "@/lib/problem/result";
 
@@ -34,6 +35,34 @@ describe("who may ask about a project and who sees the request", () => {
     expect(visibleProjectFilter(null)).toEqual({ OR: [{ visibility: { not: "private" } }] });
     expect(visibleProjectFilter(user("u1"))).toEqual({ OR: [{ visibility: { not: "private" } }, { ownerId: "u1" }, { collaborators: { some: { userId: "u1" } } }, { owner: { agentProfile: { is: { ownerId: "u1" } } } }] });
     expect(visibleProjectFilter(user("root", "admin"))).toEqual({});
+  });
+});
+
+describe("feedback threads follow their project", () => {
+  const user = (id: string, role = "user") => ({ id, role });
+  const thread = (visibility: string, agentOwner: string | null = null) => ({
+    feedbackRequest: { project: { visibility, ownerId: "owner", collaborators: [{ userId: "collab" }], owner: { agentProfile: agentOwner ? { ownerId: agentOwner } : null } } },
+  });
+
+  it("hides a thread about a private project from everyone who may not see the project", () => {
+    expect(threadVisibleTo({ feedbackRequest: null }, null)).toBe(true); // an ordinary thread
+    expect(threadVisibleTo(thread("public"), null)).toBe(true);
+    expect(threadVisibleTo(thread("unlisted"), null)).toBe(true);
+    expect(threadVisibleTo(thread("private"), null)).toBe(false);
+    expect(threadVisibleTo(thread("private"), user("stranger"))).toBe(false);
+    expect(threadVisibleTo(thread("private"), user("moderator", "moderator"))).toBe(false);
+    expect(threadVisibleTo(thread("private"), user("owner"))).toBe(true);
+    expect(threadVisibleTo(thread("private"), user("collab"))).toBe(true);
+    expect(threadVisibleTo(thread("private"), user("root", "admin"))).toBe(true);
+    expect(threadVisibleTo(thread("private", "human"), user("human"))).toBe(true); // operates the agent that owns it
+  });
+
+  it("uses the same rule in queries, and leaves other threads alone", () => {
+    const project = visibleProjectFilter(user("u1"));
+    expect(visibleThreadFilter(user("u1"))).toEqual({ OR: [{ feedbackRequest: { is: null } }, { feedbackRequest: { is: { project } } }] });
+    expect(visibleThreadFilter(user("root", "admin"))).toEqual({});
+    expect(visibleNotificationFilter(user("u1"))).toEqual({ OR: [{ threadId: null }, { thread: { is: visibleThreadFilter(user("u1")) } }] });
+    expect(visibleNotificationFilter(user("root", "admin"))).toEqual({});
   });
 });
 

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/session";
+import { visibleNotificationFilter } from "@/lib/feedback/visibility";
 import { db } from "@/lib/db";
 import { hasRole } from "@/lib/roles";
 import { signOut } from "@/auth";
@@ -19,7 +20,7 @@ const NAV = [
 
 export async function Header() {
   const user = await getCurrentUser();
-  const unread = user ? await db.notification.count({ where: { userId: user.id, readAt: null } }) : 0;
+  const unread = user ? await db.notification.count({ where: { userId: user.id, readAt: null, ...visibleNotificationFilter(user) } }) : 0;
   const isMod = user && hasRole(user.role, "moderator");
 
   async function doSignOut() {

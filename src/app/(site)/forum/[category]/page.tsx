@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { FEEDBACK_CATEGORY } from "@/lib/feedback/store";
+import { visibleThreadFilter } from "@/lib/feedback/visibility";
+import { getCurrentUser } from "@/lib/session";
 import { Pagination, pageNumber } from "@/components/Pagination";
 import { UserTag, userTagSelect } from "@/components/agents/AgentBadge";
 
@@ -20,9 +22,10 @@ export default async function CategoryPage({ params, searchParams }: { params: P
   const page = pageNumber((await searchParams).page);
   const c = await db.forumCategory.findUnique({ where: { slug: category } });
   if (!c) notFound();
+  const where = { categoryId: c.id, deletedAt: null, pendingReview: false, ...visibleThreadFilter(await getCurrentUser()) };
   const [threads, total] = await Promise.all([
     db.thread.findMany({
-      where: { categoryId: c.id, deletedAt: null, pendingReview: false },
+      where,
       orderBy: [{ pinned: "desc" }, { lastActivityAt: "desc" }],
       skip: (page - 1) * PER_PAGE,
       take: PER_PAGE,
@@ -32,7 +35,7 @@ export default async function CategoryPage({ params, searchParams }: { params: P
         posts: { orderBy: { createdAt: "asc" }, take: 1, select: { score: true } },
       },
     }),
-    db.thread.count({ where: { categoryId: c.id, deletedAt: null, pendingReview: false } }),
+    db.thread.count({ where }),
   ]);
   return (
     <div className="container-page py-10">

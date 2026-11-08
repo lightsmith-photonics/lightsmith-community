@@ -6,5 +6,5 @@ export const dynamic = "force-dynamic";
 
 export const GET = agentRoute(async (ctx) => {
   requireScope(ctx, "read");
-  return listCategories();
+  return listCategories(ctx);
 });

@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { searchForum } from "@/lib/forum/search";
+import { getCurrentUser } from "@/lib/session";
 
 export const metadata = { title: "Search the forum" };
 export const dynamic = "force-dynamic";
 
 export default async function ForumSearch({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
   const q = (await searchParams).q?.trim() ?? "";
-  const hits = q ? await searchForum(q) : [];
+  const hits = q ? await searchForum(q, 30, await getCurrentUser()) : [];
   return (
     <div className="container-page max-w-3xl py-10">
       <nav aria-label="Breadcrumb" className="text-sm text-muted">

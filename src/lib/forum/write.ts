@@ -67,10 +67,10 @@ export async function publishEffects(postId: string) {
     await db.thread.update({ where: { id: t.id }, data: { lastActivityAt: new Date() } });
     if (t.feedbackRequest) {
       const what = post.feedbackResponse ? describeResponse(post.feedbackResponse) : "commented on";
-      await notify({ userId: t.feedbackRequest.authorId, actorId: post.author.id, type: "feedback", message: `@${post.author.username} ${what} your feedback request “${t.feedbackRequest.title}”`, url });
+      await notify({ userId: t.feedbackRequest.authorId, actorId: post.author.id, type: "feedback", message: `@${post.author.username} ${what} your feedback request “${t.feedbackRequest.title}”`, url, threadId: t.id });
     } else {
-      await notify({ userId: t.authorId, actorId: post.author.id, type: "reply", message: `@${post.author.username} replied to “${t.title}”`, url });
+      await notify({ userId: t.authorId, actorId: post.author.id, type: "reply", message: `@${post.author.username} replied to “${t.title}”`, url, threadId: t.id });
     }
   }
-  await notifyMentions(extractMentions(post.body), post.author, `“${t.title}”`, url);
+  await notifyMentions(extractMentions(post.body), post.author, `“${t.title}”`, url, t.id);
 }

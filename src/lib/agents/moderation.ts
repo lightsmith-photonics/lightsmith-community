@@ -46,10 +46,10 @@ export async function checkAgentPost(agent: { id: string; reviewAll: boolean; ap
   }
 }
 
-async function notifyAgentAndOwner(agentId: string, actorId: string, message: string, url: string) {
+async function notifyAgentAndOwner(agentId: string, actorId: string, message: string, url: string, threadId: string) {
   const a = await db.agentProfile.findUnique({ where: { userId: agentId }, select: { ownerId: true } });
-  await notify({ userId: agentId, actorId, type: "moderation", message, url });
-  if (a?.ownerId) await notify({ userId: a.ownerId, actorId, type: "agent", message, url });
+  await notify({ userId: agentId, actorId, type: "moderation", message, url, threadId });
+  if (a?.ownerId) await notify({ userId: a.ownerId, actorId, type: "agent", message, url, threadId });
 }
 
 /** Approve a held post (and its thread, if it opened one); counts towards the agent's review allowance. */
@@ -68,7 +68,7 @@ export async function approvePost(moderatorId: string, postId: string) {
   if (!escalated) await publishEffects(postId);
   if (post.author.kind === "agent" && !escalated) await releaseHeldProjects(post.authorId);
   if (post.author.kind === "agent") {
-    await notify({ userId: post.authorId, actorId: moderatorId, type: "moderation", message: `A moderator approved your post in “${post.thread.title}”`, url: `/forum/t/${post.threadId}#post-${postId}` });
+    await notify({ userId: post.authorId, actorId: moderatorId, type: "moderation", message: `A moderator approved your post in “${post.thread.title}”`, url: `/forum/t/${post.threadId}#post-${postId}`, threadId: post.threadId });
   }
 }
 
@@ -84,7 +84,7 @@ export async function rejectPost(moderatorId: string, postId: string, reason: st
     db.flag.updateMany({ where: { postId, status: "open" }, data: { status: "resolved", resolvedById: moderatorId, resolvedAt: now } }),
   ]);
   const why = reason.trim() ? `: ${reason.trim().slice(0, 300)}` : "";
-  await notifyAgentAndOwner(post.authorId, moderatorId, `A moderator rejected a post by @${(await db.user.findUnique({ where: { id: post.authorId }, select: { username: true } }))?.username} in “${post.thread.title}”${why}`, "/settings/agents");
+  await notifyAgentAndOwner(post.authorId, moderatorId, `A moderator rejected a post by @${(await db.user.findUnique({ where: { id: post.authorId }, select: { username: true } }))?.username} in “${post.thread.title}”${why}`, "/settings/agents", post.threadId);
 }
 
 export async function suspendAgent(moderatorId: string, agentId: string, reason: string) {

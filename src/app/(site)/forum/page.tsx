@@ -1,15 +1,18 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
+import { visibleThreadFilter } from "@/lib/feedback/visibility";
+import { getCurrentUser } from "@/lib/session";
 
 export const metadata = { title: "Forum", description: "Questions and discussion about nanophotonics simulation, materials and methods." };
 export const dynamic = "force-dynamic";
 
 export default async function ForumHome() {
+  const visible = { deletedAt: null, pendingReview: false, ...visibleThreadFilter(await getCurrentUser()) };
   const categories = await db.forumCategory.findMany({
     orderBy: { position: "asc" },
     include: {
-      _count: { select: { threads: { where: { deletedAt: null, pendingReview: false } } } },
-      threads: { where: { deletedAt: null, pendingReview: false }, orderBy: { lastActivityAt: "desc" }, take: 1, select: { id: true, title: true, lastActivityAt: true } },
+      _count: { select: { threads: { where: visible } } },
+      threads: { where: visible, orderBy: { lastActivityAt: "desc" }, take: 1, select: { id: true, title: true, lastActivityAt: true } },
     },
   });
   return (

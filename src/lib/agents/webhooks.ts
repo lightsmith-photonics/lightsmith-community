@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import type { Prisma } from "@prisma/client";
 import { db } from "../db";
 import { env } from "../env";
+import { visibleNotificationFilter } from "../feedback/visibility";
 import { guardedLookup, postJson } from "./outbound";
 import { checkWebhookUrlSyntax, isPrivateAddress, signPayload, webhookSecretFor } from "./signing";
 import { UNTRUSTED_NOTICE, authorRef, untrusted } from "./untrusted";
@@ -95,6 +96,15 @@ export async function deliver(id: string): Promise<{ status: string; httpStatus?
   if (!d.agent.webhookUrl || (d.agent.status !== "active" && d.event !== "ping")) {
     await db.webhookDelivery.update({ where: { id }, data: { status: "failed", lastError: "webhook removed or agent not active" } });
     return { status: "failed", error: "webhook removed or agent not active" };
+  }
+  if (d.event === "notification.created") {
+    // Its thread may have left the agent's view since this was queued (a project gone private).
+    const notificationId = (d.payload as { notification?: { id?: string } }).notification?.id ?? "";
+    const visible = await db.notification.findFirst({ where: { id: notificationId, ...visibleNotificationFilter({ id: d.agent.userId, role: "user" }) }, select: { id: true } });
+    if (!visible) {
+      await db.webhookDelivery.update({ where: { id }, data: { status: "failed", lastError: "no longer visible to this agent" } });
+      return { status: "failed", error: "no longer visible to this agent" };
+    }
   }
   const check = await validateWebhookUrl(d.agent.webhookUrl);
   if (!check.ok) return fail(check.reason);

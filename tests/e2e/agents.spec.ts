@@ -367,9 +367,10 @@ test.describe("AI agents", () => {
     const ownerEmail = "e2e-fbperm-owner@example.test";
     const asker = await newAgent(page, request, ownerEmail, "e2e-fba");
     const title = "Is the minimum of this MgF2 coating really at 550 nm?";
+    const searchWord = `zebrafinch${unique("w").replace(/[^a-z0-9]/g, "")}`;
     const asked = await request.post("/api/v1/feedback", {
       headers: auth(asker.token),
-      data: { title, question: "Please re-run my quarter-wave MgF$_2$ coating on glass.", wants: ["reproduce"], problem: layerStack, result: layerStackResult },
+      data: { title, question: `Please re-run my quarter-wave MgF$_2$ coating on glass. Reference ${searchWord}.`, wants: ["reproduce"], problem: layerStack, result: layerStackResult },
     });
     expect(asked.status(), await asked.text()).toBe(201);
     const { id, project, spec, discussion } = ((await asked.json()) as Json).feedback_request as Json;
@@ -418,6 +419,10 @@ test.describe("AI agents", () => {
     expect(long.status(), await long.text()).toBe(201);
     expect((((await long.json()) as Json).feedback_request.project.title.text as string).length).toBeLessThanOrEqual(120);
 
+    // people and agents mentioned in the discussion hear about it, for now
+    const mention = await request.post(`/api/v1/feedback/${id}/responses`, { headers: auth(asker.token), data: { kind: "comment", body: `@rayleigh and @${other.username}, does this look right to you?` } });
+    expect(mention.status(), await mention.text()).toBe(201);
+
     // a locked discussion takes no more answers from agents or people, only from moderators
     expect((await request.post(`/api/v1/feedback/${id}/responses`, { headers: otherHeaders, data: { kind: "comment", body: "Which index did you use for the glass?" } })).status()).toBe(201);
     await signIn(page, "maxwell@example.test", `/forum/t/${discussion.thread_id}`);
@@ -437,7 +442,16 @@ test.describe("AI agents", () => {
     expect(((await (await request.get(`/api/v1/feedback/${id}`, { headers: auth(asker.token) })).json()) as Json).feedback_request.status).toBe("resolved");
 
     // when the project becomes private (here by an admin), the request goes with it for everyone else
+    // (everyone still sees it all while the project is public, and those mentioned were notified)
+    const notified = (await (await request.get("/api/v1/notifications", { headers: otherHeaders })).json()) as Json;
+    expect(JSON.stringify(notified.notifications)).toContain(title);
+    expect(await (async () => (((await (await request.get(`/api/v1/threads?q=${searchWord}`, { headers: otherHeaders })).json()) as Json).threads as Json[]).map((t) => t.id))()).toContain(discussion.thread_id);
+    await signIn(page, "rayleigh@example.test", "/notifications");
+    await page.goto("/notifications");
+    await expect(page.getByRole("link", { name: new RegExp(title.slice(0, 20)) }).first()).toBeVisible();
     await page.context().clearCookies();
+    await page.goto(`/forum/search?q=${searchWord}`);
+    await expect(page.getByRole("link", { name: title })).toBeVisible();
     await page.goto("/feedback?status=all");
     await expect(page.locator("h2").getByRole("link", { name: title })).toBeVisible();
     await expectAccessible(page);
@@ -453,6 +467,37 @@ test.describe("AI agents", () => {
     await page.context().clearCookies();
     await page.goto("/feedback?status=all");
     await expect(page.getByRole("link", { name: title })).toHaveCount(0); // neither the request nor its project
+
+    // ...and so does its forum thread, in every forum view, for people and agents...
+    expect((await page.goto(`/forum/t/${discussion.thread_id}`))?.status()).toBe(404);
+    await page.goto("/forum/feedback");
+    await expect(page.getByRole("link", { name: title })).toHaveCount(0);
+    await page.goto("/forum");
+    await expect(page.getByRole("link", { name: title })).toHaveCount(0);
+    await page.goto(`/forum/search?q=${searchWord}`);
+    await expect(page.getByText(`0 results for “${searchWord}”`)).toBeVisible();
+    await page.goto(`/u/${asker.username}`);
+    await expect(page.getByRole("link", { name: title })).toHaveCount(0);
+    expect((await request.get(`/api/v1/threads/${discussion.thread_id}`, { headers: otherHeaders })).status()).toBe(404);
+    expect((await request.post(`/api/v1/threads/${discussion.thread_id}/posts`, { headers: otherHeaders, data: { body: "Can I still reply here?" } })).status()).toBe(404);
+    const threadsOf = async (query: string, headers: Record<string, string>) => (((await (await request.get(`/api/v1/threads?${query}`, { headers })).json()) as Json).threads as Json[]).map((t) => t.id);
+    expect(await threadsOf(`q=${searchWord}`, otherHeaders)).not.toContain(discussion.thread_id);
+    expect(await threadsOf("category=feedback&limit=50", otherHeaders)).not.toContain(discussion.thread_id);
+    expect(((await (await request.get(`/api/v1/users/${asker.username}`, { headers: otherHeaders })).json()) as Json).recent_threads.map((t: Json) => t.id)).not.toContain(discussion.thread_id);
+
+    // ...while those who may see the project keep all of it
+    expect((await request.get(`/api/v1/threads/${discussion.thread_id}`, { headers: auth(asker.token) })).status()).toBe(200);
+    expect(await threadsOf(`q=${searchWord}`, auth(asker.token))).toContain(discussion.thread_id);
+    await signIn(page, ownerEmail, `/forum/t/${discussion.thread_id}`);
+    expect((await page.goto(`/forum/t/${discussion.thread_id}`))?.status()).toBe(200);
+
+    // ...and notifications about it leave the lists and the counts of those who may not
+    const listed2 = (await (await request.get("/api/v1/notifications", { headers: otherHeaders })).json()) as Json;
+    expect(JSON.stringify(listed2.notifications)).not.toContain(title);
+    await signIn(page, "rayleigh@example.test", "/notifications");
+    await page.goto("/notifications");
+    await expect(page.getByRole("heading", { name: "Notifications" })).toBeVisible();
+    await expect(page.getByRole("link", { name: new RegExp(title.slice(0, 20)) })).toHaveCount(0);
   });
 
   test("flags, batches, paging and retries: three flags hide a thread, a batch costs what its calls cost, ties do not fall between pages, failed webhooks are retried", async ({ page, request }) => {

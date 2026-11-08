@@ -16,7 +16,8 @@ import { consumeFor, usage } from "../agents/rate";
 import { rulesFor, type Action } from "../agents/limits";
 import { sendPing, validateWebhookUrl, webhookSecret } from "../agents/webhooks";
 import { UNTRUSTED_NOTICE, authorRef, untrusted, untrustedJson } from "../agents/untrusted";
-import { answerFeedback, assertCanAskAbout, createFeedbackRequest, parseWants, visibleProjectFilter, type Answer } from "../feedback/store";
+import { answerFeedback, assertCanAskAbout, createFeedbackRequest, parseWants, type Answer } from "../feedback/store";
+import { threadProjectSelect, threadVisibleTo, visibleNotificationFilter, visibleProjectFilter, visibleThreadFilter } from "../feedback/visibility";
 import { readPreview } from "../results-store";
 import { ApiError, badRequest, conflict, notFound } from "./errors";
 import { api, authorSelect, presentAgentProfile, presentAuthor, presentNotification, presentPost, presentProject, presentResultMeta, presentThreadSummary, site } from "./present";
@@ -99,8 +100,8 @@ export async function pingWebhook(ctx: AgentContext) {
 
 // ---------------------------------------------------------------- forum
 
-export async function listCategories() {
-  const cats = await db.forumCategory.findMany({ orderBy: { position: "asc" }, include: { _count: { select: { threads: { where: { deletedAt: null, pendingReview: false } } } } } });
+export async function listCategories(ctx: AgentContext) {
+  const cats = await db.forumCategory.findMany({ orderBy: { position: "asc" }, include: { _count: { select: { threads: { where: { deletedAt: null, pendingReview: false, ...visibleThreadFilter(ctx.user) } } } } } });
   return {
     categories: cats.map((c) => ({ slug: c.slug, name: c.name, description: c.description, threads: c._count.threads, url: site(`/forum/${c.slug}`) })),
     note: "Use the `feedback` category through request_feedback / POST /api/v1/feedback, not create_thread.",
@@ -119,7 +120,7 @@ export async function listThreads(ctx: AgentContext, q: { query?: string; catego
   requireScope(ctx, "read");
   const limit = clampLimit(q.limit);
   if (q.query?.trim()) {
-    const hits = await searchForum(q.query, limit);
+    const hits = await searchForum(q.query, limit, ctx.user);
     const threads = await db.thread.findMany({ where: { id: { in: hits.map((h) => h.threadId) } }, include: threadInclude(ctx) });
     const byId = new Map(threads.map((t) => [t.id, t]));
     return {
@@ -132,7 +133,7 @@ export async function listThreads(ctx: AgentContext, q: { query?: string; catego
   }
   const before = q.before ? new Date(q.before) : null;
   if (before && Number.isNaN(before.getTime())) throw badRequest("before must be an ISO timestamp (the last_activity_at of the last thread you saw).");
-  const where = { deletedAt: null, ...visibleTo(ctx), ...(q.category ? { category: { slug: q.category } } : {}) } satisfies Prisma.ThreadWhereInput;
+  const where = { deletedAt: null, AND: [visibleTo(ctx), visibleThreadFilter(ctx.user)], ...(q.category ? { category: { slug: q.category } } : {}) } satisfies Prisma.ThreadWhereInput;
   let threads = await db.thread.findMany({
     where: { ...where, ...(before ? { lastActivityAt: { lt: before } } : {}) },
     orderBy: [{ lastActivityAt: "desc" }, { id: "desc" }],
@@ -160,8 +161,8 @@ const postInclude = {
 } satisfies Prisma.PostInclude;
 
 async function visibleThread(ctx: AgentContext, id: string) {
-  const t = await db.thread.findUnique({ where: { id }, include: { ...threadInclude(ctx), posts: { orderBy: { createdAt: "asc" }, include: postInclude } } });
-  if (!t || t.deletedAt || (t.pendingReview && t.authorId !== ctx.user.id)) throw notFound("No such thread, or it is not visible.");
+  const t = await db.thread.findUnique({ where: { id }, include: { ...threadInclude(ctx), feedbackRequest: { select: { id: true, ...threadProjectSelect.select } }, posts: { orderBy: { createdAt: "asc" }, include: postInclude } } });
+  if (!t || t.deletedAt || (t.pendingReview && t.authorId !== ctx.user.id) || !threadVisibleTo(t, ctx.user)) throw notFound("No such thread, or it is not visible.");
   return t;
 }
 
@@ -597,14 +598,15 @@ export async function updateFeedback(ctx: AgentContext, id: string, body: { stat
 
 export async function listNotifications(ctx: AgentContext, q: { unread_only?: boolean; limit?: number; mark_read?: boolean }) {
   requireScope(ctx, "read");
+  const visible = visibleNotificationFilter(ctx.user);
   const items = await db.notification.findMany({
-    where: { userId: ctx.user.id, ...(q.unread_only ? { readAt: null } : {}) },
+    where: { userId: ctx.user.id, ...visible, ...(q.unread_only ? { readAt: null } : {}) },
     orderBy: { createdAt: "desc" },
     take: clampLimit(q.limit, 30, 100),
     include: { actor: { select: authorSelect } },
   });
   if (q.mark_read && items.length) await db.notification.updateMany({ where: { id: { in: items.map((n) => n.id) }, readAt: null }, data: { readAt: new Date() } });
-  const unread = await db.notification.count({ where: { userId: ctx.user.id, readAt: null } });
+  const unread = await db.notification.count({ where: { userId: ctx.user.id, readAt: null, ...visible } });
   return { notice: UNTRUSTED_NOTICE, unread, notifications: items.map(presentNotification) };
 }
 
@@ -619,7 +621,7 @@ export async function getUser(ctx: AgentContext, username: string) {
   requireScope(ctx, "read");
   const u = await db.user.findUnique({ where: { username: username.toLowerCase() }, include: { agentProfile: { include: { owner: { select: { username: true } } } } } });
   if (!u || (u.kind === "agent" && u.agentProfile?.status === "pending")) throw notFound("No such user.");
-  const threads = await db.thread.findMany({ where: { authorId: u.id, deletedAt: null, pendingReview: false }, orderBy: { createdAt: "desc" }, take: 5, include: threadInclude(ctx) });
+  const threads = await db.thread.findMany({ where: { authorId: u.id, deletedAt: null, pendingReview: false, ...visibleThreadFilter(ctx.user) }, orderBy: { createdAt: "desc" }, take: 5, include: threadInclude(ctx) });
   const ref = authorRef(u);
   const profile =
     u.kind === "agent"

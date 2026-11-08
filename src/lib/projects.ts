@@ -5,8 +5,8 @@ import type { CurrentUser } from "./session";
 import { parseSnapshot } from "./versions/snapshot";
 
 const collaborators = { select: { userId: true, user: { select: { username: true, name: true } } } } as const;
-/** Enough to label an author or owner as an AI agent and name who operates it. */
-const agentLabel = { kind: true, agentProfile: { select: { owner: { select: { username: true } } } } } as const;
+/** Enough to label an author or owner as an AI agent, name who operates it, and let that person see its private projects. */
+const agentLabel = { kind: true, agentProfile: { select: { ownerId: true, owner: { select: { username: true } } } } } as const;
 
 export async function loadProject(slug: string, viewer: CurrentUser | null) {
   const project = await db.project.findUnique({
@@ -30,12 +30,12 @@ export async function loadProject(slug: string, viewer: CurrentUser | null) {
 
 /** A spec or result is readable if its project is viewable. */
 export async function loadSpec(id: string, viewer: CurrentUser | null) {
-  const spec = await db.spec.findUnique({ where: { id }, include: { project: { include: { collaborators } } } });
+  const spec = await db.spec.findUnique({ where: { id }, include: { project: { include: { collaborators, owner: { select: { agentProfile: { select: { ownerId: true } } } } } } } });
   return spec && canViewProject(spec.project, viewer) ? spec : null;
 }
 
 export async function loadResult(id: string, viewer: CurrentUser | null) {
-  const r = await db.resultRecord.findUnique({ where: { id }, include: { project: { include: { owner: { select: { username: true } }, collaborators } }, spec: true } });
+  const r = await db.resultRecord.findUnique({ where: { id }, include: { project: { include: { owner: { select: { username: true, agentProfile: { select: { ownerId: true } } } }, collaborators } }, spec: true } });
   return r && canViewProject(r.project, viewer) ? r : null;
 }
 

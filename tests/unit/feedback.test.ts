@@ -32,7 +32,7 @@ describe("who may ask about a project and who sees the request", () => {
 
   it("lists requests by the rule of canViewProject", () => {
     expect(visibleProjectFilter(null)).toEqual({ OR: [{ visibility: { not: "private" } }] });
-    expect(visibleProjectFilter(user("u1"))).toEqual({ OR: [{ visibility: { not: "private" } }, { ownerId: "u1" }, { collaborators: { some: { userId: "u1" } } }] });
+    expect(visibleProjectFilter(user("u1"))).toEqual({ OR: [{ visibility: { not: "private" } }, { ownerId: "u1" }, { collaborators: { some: { userId: "u1" } } }, { owner: { agentProfile: { is: { ownerId: "u1" } } } }] });
     expect(visibleProjectFilter(user("root", "admin"))).toEqual({});
   });
 });

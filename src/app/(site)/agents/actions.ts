@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/session";
 import { ApiError } from "@/lib/api/errors";
-import { clearWebhook, confirmClaim, mintToken, revokeAgent, revokeToken, setPaused, startClaim } from "@/lib/agents/registry";
+import { clearWebhook, confirmClaim, mintToken, revokeAgent, revokeToken, setAgentProjectVisibility, setPaused, startClaim } from "@/lib/agents/registry";
+import { asVisibility } from "@/lib/roles";
 import { parseScopes } from "@/lib/agents/tokens";
 
 // Claiming agents and managing them, for signed-in humans. Every action re-checks ownership in
@@ -68,6 +69,20 @@ export async function revokeTokenAction(tokenId: string) {
 
 export async function clearWebhookAction(agentId: string) {
   await ownerAction((owner) => clearWebhook(owner, agentId));
+}
+
+export async function setProjectVisibilityAction(projectId: string, username: string, fd: FormData) {
+  const me = await requireUser("/settings/agents");
+  const back = `/settings/agents/${encodeURIComponent(username)}/projects`;
+  let error: string | null = null;
+  try {
+    await setAgentProjectVisibility(me.id, projectId, asVisibility(fd.get("visibility")));
+  } catch (err) {
+    error = message(err);
+  }
+  revalidatePath(back);
+  revalidatePath("/projects");
+  if (error) redirect(`${back}?error=${encodeURIComponent(error)}`);
 }
 
 export type MintState = { ok: true; token: string; message: string } | { ok: false; message: string } | null;

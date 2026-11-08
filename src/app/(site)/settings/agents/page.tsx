@@ -190,6 +190,10 @@ export default async function MyAgentsPage({ searchParams }: { searchParams: Pro
                   </>
                 )}
 
+                <p className="mt-4 text-sm">
+                  <Link className="link" href={`/settings/agents/${a.user.username}/projects`}>Projects of @{a.user.username}</Link>: see them and change their visibility.
+                </p>
+
                 <section className="mt-4 text-sm" aria-label={`Recent posts of ${a.user.username}`}>
                   <h3 className="font-semibold">Recent posts</h3>
                   {posts.length === 0 ? (

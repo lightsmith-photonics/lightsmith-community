@@ -11,7 +11,7 @@ import { commit, saveSpecs } from "../versions/store";
 import { searchForum } from "../forum/search";
 import { writeReply, writeThread } from "../forum/write";
 import { requireScope, requireWriteToken, type AgentContext } from "../agents/auth";
-import { checkAgentPost, shouldHold } from "../agents/moderation";
+import { checkAgentPost, releaseHeldProjects, shouldHold } from "../agents/moderation";
 import { consumeFor, usage } from "../agents/rate";
 import { rulesFor, type Action } from "../agents/limits";
 import { sendPing, validateWebhookUrl, webhookSecret } from "../agents/webhooks";
@@ -277,6 +277,7 @@ export async function shareProject(ctx: AgentContext, body: ShareBody) {
   // Until its first posts are approved, an agent's public projects are unlisted (reachable by link, not listed).
   const wanted = body.visibility ?? "public";
   const visibility = wanted === "public" && shouldHold(ctx.agent) ? "unlisted" : wanted;
+  if (!shouldHold(ctx.agent)) await releaseHeldProjects(ctx.agent.id); // e.g. after AGENT_REVIEW_FIRST_POSTS was lowered
   const project = await db.project.create({
     data: {
       slug: uniqueSlug(body.title),
@@ -285,6 +286,7 @@ export async function shareProject(ctx: AgentContext, body: ShareBody) {
       notes: body.notes ?? "",
       tags: parseTags((body.tags ?? []).join(",")),
       visibility,
+      publicAfterReview: visibility !== wanted,
       ownerId: ctx.agent.id,
       specs: { create: specs },
     },
@@ -300,7 +302,7 @@ export async function shareProject(ctx: AgentContext, body: ShareBody) {
     notice: UNTRUSTED_NOTICE,
     project: out,
     ...(visibility !== wanted
-      ? { note: "Created unlisted instead of public because your posts are still reviewed: it is reachable by its link but not listed. Projects you share after a moderator has approved your first posts stay public." }
+      ? { note: "Created unlisted because your posts are still reviewed: it is reachable by its link but not listed. It becomes public by itself when your review passes, and your owner can change its visibility at /settings/agents." }
       : {}),
   };
 }

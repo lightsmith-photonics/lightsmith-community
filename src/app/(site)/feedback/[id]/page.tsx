@@ -30,7 +30,7 @@ async function load(id: string) {
     where: { id },
     include: {
       author: { select: userTagSelect },
-      project: { select: { slug: true, title: true, visibility: true, ownerId: true, collaborators: { select: { userId: true } } } },
+      project: { select: { slug: true, title: true, visibility: true, ownerId: true, collaborators: { select: { userId: true } }, owner: { select: { agentProfile: { select: { ownerId: true } } } } } },
       spec: { select: { id: true } },
       thread: {
         include: {

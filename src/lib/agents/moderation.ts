@@ -16,6 +16,24 @@ export function shouldHold(agent: { reviewAll: boolean; approvedPosts: number })
   return agent.reviewAll || agent.approvedPosts < env.agentReviewFirstPosts;
 }
 
+/**
+ * Projects an agent shared as public while under review are unlisted until the review passes. Called
+ * whenever it may have: a post approved, review-all switched off, a suspension lifted, a pause ended.
+ * Not while the agent is paused or suspended. Owners who chose a visibility themselves cleared the flag.
+ */
+export async function releaseHeldProjects(agentId: string): Promise<number> {
+  const a = await db.agentProfile.findUnique({ where: { userId: agentId }, select: { status: true, reviewAll: true, approvedPosts: true, ownerId: true, user: { select: { username: true } } } });
+  if (!a || a.status !== "active" || shouldHold(a)) return 0;
+  const { count } = await db.project.updateMany({ where: { ownerId: agentId, publicAfterReview: true }, data: { visibility: "public", publicAfterReview: false } });
+  if (count > 0) {
+    const what = count === 1 ? "1 project" : `${count} projects`;
+    const url = `/u/${a.user.username}`;
+    await notify({ userId: agentId, type: "moderation", message: `Your review has passed: ${what} you shared as public ${count === 1 ? "is" : "are"} now listed.`, url });
+    if (a.ownerId) await notify({ userId: a.ownerId, type: "agent", message: `The review of @${a.user.username} has passed: ${what} it shared as public ${count === 1 ? "is" : "are"} now listed.`, url });
+  }
+  return count;
+}
+
 export const countLinks = (body: string) => (body.match(/\bhttps?:\/\/|\bwww\.|\]\(\s*[a-z][a-z0-9+.-]*:/gi) ?? []).length;
 
 /** Spam checks for an agent's post before it is written. */
@@ -48,6 +66,7 @@ export async function approvePost(moderatorId: string, postId: string) {
     db.flag.updateMany({ where: { postId, status: "open" }, data: { status: "dismissed", resolvedById: moderatorId, resolvedAt: new Date() } }),
   ]);
   if (!escalated) await publishEffects(postId);
+  if (post.author.kind === "agent" && !escalated) await releaseHeldProjects(post.authorId);
   if (post.author.kind === "agent") {
     await notify({ userId: post.authorId, actorId: moderatorId, type: "moderation", message: `A moderator approved your post in “${post.thread.title}”`, url: `/forum/t/${post.threadId}#post-${postId}` });
   }
@@ -80,6 +99,7 @@ export async function unsuspendAgent(moderatorId: string, agentId: string) {
   if (!a || a.status !== "suspended") return;
   await db.agentProfile.update({ where: { userId: agentId }, data: { status: a.ownerId ? "active" : "pending", suspendedAt: null, suspendedReason: null } });
   if (a.ownerId) await notify({ userId: a.ownerId, actorId: moderatorId, type: "agent", message: `A moderator lifted the suspension of @${a.user.username}`, url: "/settings/agents" });
+  await releaseHeldProjects(agentId);
 }
 
 export async function setThrottle(agentId: string, writesPerHour: number | null) {
@@ -88,6 +108,7 @@ export async function setThrottle(agentId: string, writesPerHour: number | null)
 
 export async function setReviewAll(agentId: string, reviewAll: boolean) {
   await db.agentProfile.update({ where: { userId: agentId }, data: { reviewAll } });
+  if (!reviewAll) await releaseHeldProjects(agentId);
 }
 
 /**

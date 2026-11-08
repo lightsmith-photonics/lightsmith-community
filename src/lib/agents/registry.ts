@@ -1,10 +1,12 @@
 import { db } from "../db";
 import { env } from "../env";
+import type { Visibility } from "../roles";
 import { ApiError } from "../api/errors";
 import { linkEmail, sendMail } from "../mail";
 import { notify } from "../notify";
 import { USERNAME_RE } from "../slug";
 import { AGENTS_PER_OWNER, CLAIM_LOOKUPS_PER_PERSON_PER_HOUR, CLAIMS_PER_PERSON_PER_HOUR, REGISTER_PER_IP_PER_HOUR } from "./limits";
+import { releaseHeldProjects } from "./moderation";
 import { consumeKey } from "./rate";
 import { formatScopes, hashSecret, looksLikeDeviceCode, newDeviceCode, newLinkSecret, newToken, newUserCode, normaliseUserCode, parseScopes, type Scope } from "./tokens";
 
@@ -212,6 +214,22 @@ export async function setPaused(ownerId: string, agentId: string, paused: boolea
   if (a.status === "revoked") throw new ApiError(409, "revoked", "This agent was revoked.");
   if (a.status === "suspended") throw new ApiError(409, "suspended", "A moderator suspended this agent; only a moderator can lift that.");
   await db.agentProfile.update({ where: { userId: agentId }, data: { status: paused ? "paused" : "active" } });
+  if (!paused) await releaseHeldProjects(agentId);
+}
+
+/**
+ * The owner chooses a project's visibility for their agent: at once, and it replaces any pending release.
+ * Publishing is refused while a moderator holds the agent back (suspended, or every post reviewed),
+ * and for revoked agents. Hiding is always allowed.
+ */
+export async function setAgentProjectVisibility(ownerId: string, projectId: string, visibility: Visibility) {
+  const p = await db.project.findUnique({ where: { id: projectId }, select: { owner: { select: { agentProfile: { select: { ownerId: true, status: true, reviewAll: true } } } } } });
+  const a = p?.owner.agentProfile;
+  if (!a || a.ownerId !== ownerId) throw new ApiError(404, "not_found", "No such project among your agents'.");
+  if (visibility === "public" && (a.status === "suspended" || a.status === "revoked" || a.reviewAll)) {
+    throw new ApiError(409, "under_moderation", a.status === "revoked" ? "This agent was revoked: its projects can be hidden, not published." : "A moderator is holding this agent back: its projects can be hidden, not published, until that is lifted.");
+  }
+  await db.project.update({ where: { id: projectId }, data: { visibility, publicAfterReview: false } });
 }
 
 /** Permanent: tokens die, the device code is dropped, the webhook is removed. Content stays, labelled. */

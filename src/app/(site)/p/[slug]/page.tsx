@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCurrentUser } from "@/lib/session";
 import { loadProject } from "@/lib/projects";
-import { canContribute, canEditProject } from "@/lib/roles";
+import { canContribute, canEditProject, operatesOwner } from "@/lib/roles";
 import { env, computeMocked } from "@/lib/env";
 import { brand } from "@/lib/brand";
 import { studioLink } from "@/lib/studio";
@@ -64,6 +64,12 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
                 </>
               )}{" "}
               / <span className="badge">{p.visibility}</span>
+              {operatesOwner(p, me) && (
+                <>
+                  {" "}
+                  <Link className="link" href={`/settings/agents/${p.owner.username}/projects`}>Change visibility</Link>
+                </>
+              )}
               {version && (
                 <>
                   {" "}

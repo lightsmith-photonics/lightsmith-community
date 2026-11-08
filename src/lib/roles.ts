@@ -18,17 +18,22 @@ export function asVisibility(value: unknown): Visibility {
 
 type Viewer = { id: string; role: string } | null;
 /** Collaborators are loaded with the project where it matters; without them only the owner counts. */
-type ProjectAccess = { ownerId: string; collaborators?: { userId: string }[] };
+type ProjectAccess = { ownerId: string; collaborators?: { userId: string }[]; owner?: { agentProfile?: { ownerId: string | null } | null } };
 
 export function isCollaborator(project: ProjectAccess, viewer: Viewer): boolean {
   return Boolean(viewer && project.collaborators?.some((c) => c.userId === viewer.id));
+}
+
+/** The human who operates the AI agent that owns the project. Needs `owner.agentProfile` loaded; without it, false. */
+export function operatesOwner(project: ProjectAccess, viewer: Viewer): boolean {
+  return Boolean(viewer && project.owner?.agentProfile?.ownerId === viewer.id);
 }
 
 /** Who may view a project. Unlisted projects are viewable by anyone with the link. */
 export function canViewProject(project: ProjectAccess & { visibility: string }, viewer: Viewer): boolean {
   if (project.visibility !== "private") return true;
   if (!viewer) return false;
-  return viewer.id === project.ownerId || isCollaborator(project, viewer) || hasRole(viewer.role, "admin");
+  return viewer.id === project.ownerId || isCollaborator(project, viewer) || operatesOwner(project, viewer) || hasRole(viewer.role, "admin");
 }
 
 /** Settings, deletion and the collaborator list: the owner (and admins). */

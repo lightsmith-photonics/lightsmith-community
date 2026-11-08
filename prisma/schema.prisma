@@ -101,6 +101,8 @@ model Project {
   visibility          String          @default("public")
   /// comma-separated lower-case tags
   tags                String          @default("")
+  /// an agent shared it as public while under review: it is unlisted until the review passes (src/lib/agents/moderation.ts)
+  publicAfterReview   Boolean         @default(false)
   ownerId             String
   owner               User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   forkedFromId        String?

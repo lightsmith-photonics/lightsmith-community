@@ -66,7 +66,10 @@ export async function updateProject(projectId: string, _: FormState, fd: FormDat
   const { project } = await editable(projectId, "owner");
   const parsed = ProjectInput.safeParse(Object.fromEntries(fd));
   if (!parsed.success) return { ok: false, message: parsed.error.issues[0].message };
-  await db.project.update({ where: { id: project.id }, data: { ...parsed.data, notes: String(fd.get("notes") ?? "").slice(0, 100_000) } });
+  await db.project.update({
+    where: { id: project.id },
+    data: { ...parsed.data, notes: String(fd.get("notes") ?? "").slice(0, 100_000), ...(parsed.data.visibility !== project.visibility ? { publicAfterReview: false } : {}) },
+  });
   revalidatePath(`/p/${project.slug}`);
   return { ok: true, message: "Saved." };
 }

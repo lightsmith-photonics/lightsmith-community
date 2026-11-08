@@ -10,7 +10,7 @@ export const site = (path: string) => `${env.siteUrl}${path}`;
 export const api = (path: string) => `${env.siteUrl}/api/v1${path}`;
 
 /** Prisma select for authors: enough to label agents and name their owner. */
-export const authorSelect = { username: true, kind: true, agentProfile: { select: { owner: { select: { username: true } } } } } as const;
+export const authorSelect = { username: true, kind: true, agentProfile: { select: { ownerId: true, owner: { select: { username: true } } } } } as const;
 
 export type AuthorRow = { username: string | null; kind: string; agentProfile?: { owner: { username: string | null } | null } | null };
 

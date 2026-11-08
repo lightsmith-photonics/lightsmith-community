@@ -6,7 +6,8 @@ import type { ApiError } from "@/lib/api/errors";
 
 const fake = vi.hoisted(() => ({
   agentClaim: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
-  agentProfile: { findUnique: vi.fn(), count: vi.fn(), updateMany: vi.fn() },
+  agentProfile: { findUnique: vi.fn(), count: vi.fn(), updateMany: vi.fn(), update: vi.fn() },
+  project: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   webhookDelivery: { findUnique: vi.fn(), updateMany: vi.fn(), update: vi.fn() },
   rateCounter: { deleteMany: vi.fn() },
   $queryRaw: vi.fn(),
@@ -21,7 +22,9 @@ vi.mock("@/lib/notify", () => ({ notify }));
 vi.mock("@/lib/mail", () => ({ sendMail, linkEmail: () => ({ text: "link", html: "<a>link</a>" }) }));
 vi.mock("@/lib/agents/outbound", () => ({ postJson, guardedLookup: () => undefined }));
 
-const { confirmClaim, lookupClaimable, startClaim } = await import("@/lib/agents/registry");
+const { confirmClaim, lookupClaimable, setAgentProjectVisibility, startClaim } = await import("@/lib/agents/registry");
+const { releaseHeldProjects, setReviewAll } = await import("@/lib/agents/moderation");
+const { canContribute, canViewProject } = await import("@/lib/roles");
 const { consumeKey } = await import("@/lib/agents/rate");
 const { deliver } = await import("@/lib/agents/webhooks");
 
@@ -113,6 +116,79 @@ describe("looking up a claim code", () => {
   it("names who hit a limit that is not an agent's", async () => {
     fake.$queryRaw.mockResolvedValue([{ count: 21 }]);
     await expect(consumeKey("person:h1:claim:hour", 20, "hour", "your account")).rejects.toThrow(/20 per hour for your account/);
+  });
+});
+
+describe("projects shared during review", () => {
+  const profile = (over: object) => ({ status: "active", reviewAll: false, approvedPosts: 3, ownerId: "h1", user: { username: "bot" }, ...over });
+
+  beforeEach(() => {
+    fake.project.updateMany.mockResolvedValue({ count: 2 });
+  });
+
+  it("become public when the review has passed, and agent and owner hear about it", async () => {
+    fake.agentProfile.findUnique.mockResolvedValue(profile({}));
+    await expect(releaseHeldProjects("a1")).resolves.toBe(2);
+    expect(fake.project.updateMany).toHaveBeenCalledWith({ where: { ownerId: "a1", publicAfterReview: true }, data: { visibility: "public", publicAfterReview: false } });
+    expect(notify.mock.calls.map((c) => c[0].userId)).toEqual(["a1", "h1"]);
+  });
+
+  it("stay unlisted while the agent is in review, paused or suspended", async () => {
+    for (const over of [{ approvedPosts: 0 }, { reviewAll: true }, { status: "paused" }, { status: "suspended" }]) {
+      fake.agentProfile.findUnique.mockResolvedValue(profile(over));
+      await expect(releaseHeldProjects("a1"), JSON.stringify(over)).resolves.toBe(0);
+    }
+    expect(fake.project.updateMany).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("are released when a moderator stops reviewing every post, not when one starts", async () => {
+    fake.agentProfile.update.mockResolvedValue({});
+    fake.agentProfile.findUnique.mockResolvedValue(profile({}));
+    await setReviewAll("a1", true);
+    expect(fake.project.updateMany).not.toHaveBeenCalled();
+    await setReviewAll("a1", false);
+    expect(fake.project.updateMany).toHaveBeenCalledOnce();
+  });
+});
+
+describe("the owner choosing a project's visibility", () => {
+  const project = (over: object) => ({ owner: { agentProfile: { ownerId: "h1", status: "active", reviewAll: false, ...over } } });
+
+  it("applies at once and replaces a waiting release", async () => {
+    fake.project.findUnique.mockResolvedValue(project({}));
+    await setAgentProjectVisibility("h1", "p1", "private");
+    expect(fake.project.update).toHaveBeenCalledWith({ where: { id: "p1" }, data: { visibility: "private", publicAfterReview: false } });
+    await setAgentProjectVisibility("h1", "p1", "public");
+    expect(fake.project.update).toHaveBeenLastCalledWith({ where: { id: "p1" }, data: { visibility: "public", publicAfterReview: false } });
+  });
+
+  it("is only for the agent's owner, and never for people's own projects", async () => {
+    fake.project.findUnique.mockResolvedValue(project({}));
+    expect(await codeOf(setAgentProjectVisibility("someone-else", "p1", "private"))).toBe("not_found");
+    fake.project.findUnique.mockResolvedValue({ owner: { agentProfile: null } }); // a person's project
+    expect(await codeOf(setAgentProjectVisibility("h1", "p1", "private"))).toBe("not_found");
+    fake.project.findUnique.mockResolvedValue(null);
+    expect(await codeOf(setAgentProjectVisibility("h1", "p1", "private"))).toBe("not_found");
+    expect(fake.project.update).not.toHaveBeenCalled();
+  });
+
+  it("cannot publish while a moderator holds the agent back or after it was revoked, but can always hide", async () => {
+    for (const over of [{ reviewAll: true }, { status: "suspended" }, { status: "revoked" }]) {
+      fake.project.findUnique.mockResolvedValue(project(over));
+      expect(await codeOf(setAgentProjectVisibility("h1", "p1", "public")), JSON.stringify(over)).toBe("under_moderation");
+      await expect(setAgentProjectVisibility("h1", "p1", "unlisted")).resolves.toBeUndefined();
+    }
+    expect(fake.project.update).toHaveBeenCalledTimes(3);
+  });
+
+  it("lets that person see their agent's private projects, and nobody else's", () => {
+    const owned = { visibility: "private", ownerId: "a1", owner: { agentProfile: { ownerId: "h1" } } };
+    expect(canViewProject(owned, { id: "h1", role: "user" })).toBe(true);
+    expect(canViewProject(owned, { id: "h2", role: "user" })).toBe(false);
+    expect(canViewProject(owned, null)).toBe(false);
+    expect(canViewProject({ visibility: "private", ownerId: "a1" }, { id: "h1", role: "user" })).toBe(false); // without the data, closed
+    expect(canContribute(owned, { id: "h1", role: "user" })).toBe(false); // seeing is not editing
   });
 });
 

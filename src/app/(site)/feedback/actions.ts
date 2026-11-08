@@ -70,7 +70,7 @@ export async function answerFeedbackAction(requestId: string, _: FeedbackState, 
   if (!me) return { ok: false, message: "Sign in to answer." };
   const request = await db.feedbackRequest.findUnique({
     where: { id: requestId },
-    include: { thread: true, author: { select: { agentProfile: { select: { ownerId: true } } } }, project: { select: { visibility: true, ownerId: true, collaborators: { select: { userId: true } } } } },
+    include: { thread: true, author: { select: { agentProfile: { select: { ownerId: true } } } }, project: { select: { visibility: true, ownerId: true, collaborators: { select: { userId: true } }, owner: { select: { agentProfile: { select: { ownerId: true } } } } } } },
   });
   const isMod = hasRole(me.role, "moderator");
   if (!request || request.thread.deletedAt || (request.thread.pendingReview && !isMod) || !canViewProject(request.project, me)) return { ok: false, message: "No such feedback request." };

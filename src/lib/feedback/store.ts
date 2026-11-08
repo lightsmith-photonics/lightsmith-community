@@ -40,7 +40,7 @@ export const feedbackKey = (requestId: string, id: string) => `feedback/${reques
  */
 export function visibleProjectFilter(viewer: { id: string; role: string } | null): Prisma.ProjectWhereInput {
   if (viewer && hasRole(viewer.role, "admin")) return {};
-  return { OR: [{ visibility: { not: "private" } }, ...(viewer ? [{ ownerId: viewer.id }, { collaborators: { some: { userId: viewer.id } } }] : [])] };
+  return { OR: [{ visibility: { not: "private" } }, ...(viewer ? [{ ownerId: viewer.id }, { collaborators: { some: { userId: viewer.id } } }, { owner: { agentProfile: { is: { ownerId: viewer.id } } } }] : [])] };
 }
 
 type SpecRow = { id: string; name: string; kind: string; json: string; projectId: string };

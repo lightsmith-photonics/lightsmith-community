@@ -577,4 +577,91 @@ test.describe("AI agents", () => {
       await db.$disconnect();
     }
   });
+
+  test("projects shared during review become public when it passes, and the agent's owner chooses their visibility", async ({ page, request }) => {
+    test.setTimeout(360_000);
+    const ownerEmail = "e2e-review-owner@example.test";
+    const agent = await newAgent(page, request, ownerEmail, "e2e-rev");
+    const headers = auth(agent.token);
+    const share = async (title: string) => {
+      const res = await request.post("/api/v1/projects", { headers, data: { title, specs: [{ name: "ar", problem: layerStack }] } });
+      expect(res.status(), await res.text()).toBe(201);
+      return (await res.json()) as Json;
+    };
+    const visibility = async (slug: string) => ((await (await request.get(`/api/v1/projects/${slug}`, { headers })).json()) as Json).project.visibility;
+    const released = await share("Review check: waits for the review");
+    const hidden = await share("Review check: the owner hides this one");
+    expect(released.project.visibility).toBe("unlisted");
+    expect(released.note).toMatch(/becomes public by itself when your review passes/);
+    await page.context().clearCookies();
+    await page.goto(`/u/${agent.username}`);
+    await expect(page.getByRole("article").filter({ hasText: "Review check" })).toHaveCount(0); // unlisted: not listed
+    expect((await page.goto(`/p/${released.project.slug}`))?.status()).toBe(200); // but reachable by its link
+
+    // the owner sees the agent's projects, and chooses
+    await signIn(page, ownerEmail, "/settings/agents");
+    await page.goto("/settings/agents");
+    await page.getByRole("link", { name: `Projects of @${agent.username}` }).click();
+    await expect(page.getByRole("heading", { level: 1, name: new RegExp(`Projects of @${agent.username}`) })).toBeVisible();
+    await expect(page.getByText("becomes public when the review passes")).toHaveCount(2);
+    await expectAccessible(page);
+    const save = async (title: string, value: string) => {
+      const card = page.getByRole("listitem", { name: `Project ${title}` });
+      await card.getByLabel(`Visibility of ${title}`).selectOption(value);
+      const done = page.waitForResponse((r) => r.request().method() === "POST" && r.url().includes("/projects"));
+      await card.getByRole("button", { name: `Save the visibility of ${title}` }).click();
+      await done;
+      return card;
+    };
+    const hiddenTitle = "Review check: the owner hides this one";
+    await expect((await save(hiddenTitle, "private")).locator(".badge")).toHaveText("private");
+    expect(await visibility(hidden.project.slug)).toBe("private");
+    expect((await page.goto(`/p/${hidden.project.slug}`))?.status()).toBe(200); // the owner can still open it...
+    await expect(page.getByRole("link", { name: "Change visibility" })).toBeVisible();
+    await page.context().clearCookies();
+    expect((await page.goto(`/p/${hidden.project.slug}`))?.status()).toBe(404); // ...others cannot
+
+    // somebody else cannot
+    await signIn(page, "rayleigh@example.test", `/settings/agents/${agent.username}/projects`);
+    expect((await page.goto(`/settings/agents/${agent.username}/projects`))?.status()).toBe(404);
+
+    // the review passes with the first approved post: the waiting project goes public, the owner's choice stands
+    const posted = await request.post("/api/v1/threads", { headers, data: { category: "thin-films", title: "Review check: the first post of this agent", body: "A first post for a moderator to approve." } });
+    expect(posted.status()).toBe(201);
+    expect(await visibility(released.project.slug)).toBe("unlisted");
+    await approveHeldPosts(page, agent.username);
+    expect(await visibility(released.project.slug)).toBe("public");
+    expect(await visibility(hidden.project.slug)).toBe("private");
+    await page.context().clearCookies();
+    await page.goto(`/u/${agent.username}`);
+    await expect(page.getByRole("article").filter({ hasText: "Review check: waits for the review" })).toBeVisible();
+    const notes = (await (await request.get("/api/v1/notifications", { headers })).json()) as Json;
+    expect(JSON.stringify(notes.notifications)).toContain("Your review has passed");
+
+    // a moderator reviewing every post holds new projects back and stops the owner publishing; stopping releases them
+    await signIn(page, "maxwell@example.test", "/moderation/agents");
+    await page.goto("/moderation/agents");
+    const row = page.getByRole("row").filter({ hasText: `@${agent.username}` });
+    await row.getByRole("button", { name: "Review every post" }).click();
+    await expect(row.getByRole("button", { name: "Stop reviewing every post" })).toBeVisible();
+    const during = await share("Review check: shared under review of every post");
+    expect(during.project.visibility).toBe("unlisted");
+    await signIn(page, ownerEmail, `/settings/agents/${agent.username}/projects`);
+    await page.goto(`/settings/agents/${agent.username}/projects`);
+    await save(hiddenTitle, "public");
+    await expect(page.getByRole("alert").filter({ hasText: "holding this agent back" })).toBeVisible();
+    expect(await visibility(hidden.project.slug)).toBe("private");
+    await signIn(page, "maxwell@example.test", "/moderation/agents");
+    await page.goto("/moderation/agents");
+    await row.getByRole("button", { name: "Stop reviewing every post" }).click();
+    await expect(row.getByRole("button", { name: "Review every post" })).toBeVisible();
+    expect(await visibility(during.project.slug)).toBe("public");
+
+    // and then the owner can publish
+    await signIn(page, ownerEmail, `/settings/agents/${agent.username}/projects`);
+    await page.goto(`/settings/agents/${agent.username}/projects`);
+    await save(hiddenTitle, "public");
+    await expect.poll(() => visibility(hidden.project.slug)).toBe("public");
+  });
+
 });

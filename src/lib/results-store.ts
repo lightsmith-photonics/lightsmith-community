@@ -4,7 +4,8 @@ import { deleteObject, getJsonText, putJson, resultKey } from "./storage";
 import { makePreview, type AnyResult, type ResultPreview } from "./problem/result";
 
 // Result rows hold metadata and a preview; the full JSON lives gzipped in object storage.
-// Each new result is also linked to a project version (src/lib/versions), which keeps its own reference.
+// Each new result is also linked to a project version (src/lib/versions), which keeps its own reference;
+// feedback requests (src/lib/feedback) reference the result they ask about too.
 
 /** Store a result and link it to `versionId` (a job's version) or, by default, the project's current version. */
 export async function saveResult(input: { projectId: string; specId: string | null; name: string; result: AnyResult; versionId?: string | null }) {
@@ -59,11 +60,12 @@ export async function deleteStoredResults(keys: string[]) {
 /** Delete objects that no live result or project version references any more. */
 export async function deleteUnreferencedResults(keys: string[]) {
   if (keys.length === 0) return;
-  const [live, versioned] = await Promise.all([
+  const [live, versioned, asked] = await Promise.all([
     db.resultRecord.findMany({ where: { storageKey: { in: keys } }, select: { storageKey: true } }),
     db.versionResult.findMany({ where: { storageKey: { in: keys } }, select: { storageKey: true } }),
+    db.feedbackRequest.findMany({ where: { resultKey: { in: keys } }, select: { resultKey: true } }),
   ]);
-  const used = new Set([...live, ...versioned].map((r) => r.storageKey));
+  const used = new Set([...live, ...versioned].map((r) => r.storageKey).concat(asked.map((f) => f.resultKey!)));
   await deleteStoredResults(keys.filter((k) => !used.has(k)));
 }
 

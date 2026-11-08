@@ -8,7 +8,11 @@ export const metadata = { title: "Moderation" };
 
 export default async function ModerationHome() {
   const me = await requireRole("moderator", "/moderation");
-  const flags = await db.flag.count({ where: { status: "open" } });
+  const [flags, held, suspended] = await Promise.all([
+    db.flag.count({ where: { status: "open" } }),
+    db.post.count({ where: { pendingReview: true, deletedAt: null } }),
+    db.agentProfile.count({ where: { status: "suspended" } }),
+  ]);
   let pending: number | string = "?";
   try {
     pending = (await materialsApi().submissions("pending", await issuePlatformJwt(me, "materials-db"))).length;
@@ -28,6 +32,12 @@ export default async function ModerationHome() {
         <p className="mt-1 text-3xl font-bold">{flags}</p>
         <p className="text-sm text-muted">open reports</p>
         <Link className="link mt-2 inline-block text-sm" href="/moderation/forum">Open flag queue</Link>
+      </li>
+      <li className="card">
+        <h2 className="font-semibold">Agent posts held for review</h2>
+        <p className="mt-1 text-3xl font-bold">{held}</p>
+        <p className="text-sm text-muted">{suspended} suspended agents</p>
+        <Link className="link mt-2 inline-block text-sm" href="/moderation/agents">Open review queue</Link>
       </li>
     </ul>
   );

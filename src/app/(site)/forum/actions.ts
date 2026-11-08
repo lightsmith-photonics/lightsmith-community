@@ -6,8 +6,9 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { getCurrentUser, requireRole, requireUser } from "@/lib/session";
 import { hasRole } from "@/lib/roles";
-import { extractMentions } from "@/lib/forum/mentions";
-import { notify, notifyMentions } from "@/lib/notify";
+import { notify } from "@/lib/notify";
+import { writeReply, writeThread } from "@/lib/forum/write";
+import { escalateFlaggedAgentPost } from "@/lib/agents/moderation";
 
 export type ForumState = { ok: boolean; message: string } | null;
 
@@ -38,15 +39,15 @@ export async function createThread(_: ForumState, fd: FormData): Promise<ForumSt
   if (!body.success) return { ok: false, message: body.error.issues[0].message };
   const category = await db.forumCategory.findUnique({ where: { slug: String(fd.get("category") ?? "") } });
   if (!category) return { ok: false, message: "Choose a category." };
-  const thread = await db.thread.create({
-    data: {
-      title: title.data,
-      categoryId: category.id,
-      authorId: user.id,
-      posts: { create: { authorId: user.id, body: body.data, ...(await attachment(fd.get("attachment"))) } },
-    },
+  const { thread } = await writeThread({
+    author: user,
+    categoryId: category.id,
+    title: title.data,
+    body: body.data,
+    attachment: await attachment(fd.get("attachment")),
+    via: "web",
+    hold: false,
   });
-  await notifyMentions(extractMentions(body.data), user, `“${title.data}”`, `/forum/t/${thread.id}`);
   redirect(`/forum/t/${thread.id}`);
 }
 
@@ -54,23 +55,20 @@ export async function reply(threadId: string, _: ForumState, fd: FormData): Prom
   const user = await getCurrentUser();
   if (!user) return { ok: false, message: "Sign in to reply." };
   const thread = await db.thread.findUnique({ where: { id: threadId } });
-  if (!thread || thread.deletedAt) return { ok: false, message: "Thread not found." };
+  if (!thread || thread.deletedAt || (thread.pendingReview && !hasRole(user.role, "moderator"))) return { ok: false, message: "Thread not found." };
   if (thread.locked && !hasRole(user.role, "moderator")) return { ok: false, message: "This thread is locked." };
   const body = Body.safeParse(fd.get("body"));
   if (!body.success) return { ok: false, message: body.error.issues[0].message };
-  const post = await db.post.create({ data: { threadId, authorId: user.id, body: body.data, ...(await attachment(fd.get("attachment"))) } });
-  await db.thread.update({ where: { id: threadId }, data: { lastActivityAt: new Date() } });
-  const url = `/forum/t/${threadId}#post-${post.id}`;
-  await notify({ userId: thread.authorId, actorId: user.id, type: "reply", message: `@${user.username} replied to “${thread.title}”`, url });
-  await notifyMentions(extractMentions(body.data).filter(Boolean), user, `“${thread.title}”`, url);
+  await writeReply({ author: user, threadId, body: body.data, attachment: await attachment(fd.get("attachment")), via: "web", hold: false });
   revalidatePath(`/forum/t/${threadId}`);
+  revalidatePath("/feedback", "layout");
   return { ok: true, message: "Posted." };
 }
 
 export async function vote(postId: string, value: 1 | -1) {
   const user = await requireUser();
   const post = await db.post.findUnique({ where: { id: postId } });
-  if (!post || post.deletedAt || post.authorId === user.id) return;
+  if (!post || post.deletedAt || post.pendingReview || post.authorId === user.id) return;
   const key = { userId_postId: { userId: user.id, postId } };
   const existing = await db.vote.findUnique({ where: key });
   if (existing?.value === value) await db.vote.delete({ where: key });
@@ -101,6 +99,7 @@ export async function flagPost(postId: string, _: ForumState, fd: FormData): Pro
   if (!reason.success) return { ok: false, message: reason.error.issues[0].message };
   const dup = await db.flag.findFirst({ where: { postId, reporterId: user.id, status: "open" } });
   if (!dup) await db.flag.create({ data: { postId, reporterId: user.id, reason: reason.data } });
+  await escalateFlaggedAgentPost(postId);
   return { ok: true, message: "Thanks — a moderator will take a look." };
 }
 

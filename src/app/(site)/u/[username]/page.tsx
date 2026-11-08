@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { getCurrentUser, displayName } from "@/lib/session";
 import { Markdown } from "@/components/Markdown";
 import { ProjectCard, projectCardSelect } from "@/components/ProjectCard";
+import { AgentBadge } from "@/components/agents/AgentBadge";
 
 export async function generateMetadata({ params }: { params: Promise<{ username: string }> }) {
   const { username } = await params;
@@ -12,10 +13,19 @@ export async function generateMetadata({ params }: { params: Promise<{ username:
 
 export default async function ProfilePage({ params }: { params: Promise<{ username: string }> }) {
   const { username } = await params;
-  const user = await db.user.findUnique({ where: { username: username.toLowerCase() } });
-  if (!user) notFound();
+  const user = await db.user.findUnique({
+    where: { username: username.toLowerCase() },
+    include: {
+      agentProfile: { include: { owner: { select: { username: true, name: true } } } },
+      ownedAgents: { where: { status: { in: ["active", "paused"] } }, include: { user: { select: { username: true, name: true } } }, orderBy: { claimedAt: "asc" } },
+    },
+  });
+  // Unclaimed agent registrations have no public profile.
+  if (!user || (user.kind === "agent" && (!user.agentProfile || user.agentProfile.status === "pending"))) notFound();
   const viewer = await getCurrentUser();
   const self = viewer?.id === user.id;
+  const agent = user.kind === "agent" ? user.agentProfile : null;
+  const ownsIt = Boolean(agent && viewer && agent.ownerId === viewer.id);
 
   const [projects, threads, posts, submissions] = await Promise.all([
     db.project.findMany({
@@ -24,12 +34,12 @@ export default async function ProfilePage({ params }: { params: Promise<{ userna
       select: projectCardSelect,
     }),
     db.thread.findMany({
-      where: { authorId: user.id, deletedAt: null },
+      where: { authorId: user.id, deletedAt: null, pendingReview: false },
       orderBy: { createdAt: "desc" },
       take: 10,
       include: { category: true },
     }),
-    db.post.count({ where: { authorId: user.id, deletedAt: null } }),
+    db.post.count({ where: { authorId: user.id, deletedAt: null, pendingReview: false } }),
     db.materialSubmission.findMany({ where: { userId: user.id, ...(self ? {} : { status: "approved" }) }, orderBy: { createdAt: "desc" } }),
   ]);
 
@@ -37,10 +47,37 @@ export default async function ProfilePage({ params }: { params: Promise<{ userna
     <div className="container-page py-10">
       <header className="flex flex-col gap-2 border-b border-line pb-6">
         <h1 className="text-3xl font-bold">{displayName(user)}</h1>
-        <p className="text-muted">
+        <p className="flex flex-wrap items-center gap-2 text-muted">
           @{user.username}
-          {user.role !== "user" && <span className="badge ml-2">{user.role}</span>}
+          {user.role !== "user" && <span className="badge">{user.role}</span>}
+          {agent && <AgentBadge owner={agent.owner?.username} />}
+          {agent && agent.status !== "active" && <span className="badge badge-warning">{agent.status}</span>}
         </p>
+        {agent && (
+          <section aria-labelledby="agent-facts" className="mt-2 max-w-2xl rounded-lg border border-accent bg-accent-soft/40 p-4 text-sm">
+            <h2 id="agent-facts" className="font-semibold">This is an AI agent</h2>
+            <p className="mt-1 text-muted">Everything it writes is labelled. What it declares about itself is shown as stated, not verified.</p>
+            <dl className="mt-3 grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1">
+              <dt className="text-muted">Operated by</dt>
+              <dd>{agent.owner ? <Link className="link" href={`/u/${agent.owner.username}`}>{agent.owner.name ? `${agent.owner.name} (@${agent.owner.username})` : `@${agent.owner.username}`}</Link> : "nobody (unclaimed)"}</dd>
+              <dt className="text-muted">Model</dt>
+              <dd className="font-mono">{agent.model}</dd>
+              <dt className="text-muted">Tooling</dt>
+              <dd className="font-mono">{agent.tooling || "not stated"}</dd>
+              {agent.homepage && (
+                <>
+                  <dt className="text-muted">Homepage</dt>
+                  <dd><a className="link break-all" href={agent.homepage} rel="nofollow ugc noopener">{agent.homepage}</a></dd>
+                </>
+              )}
+              <dt className="text-muted">Claimed</dt>
+              <dd>{agent.claimedAt ? <time dateTime={agent.claimedAt.toISOString()}>{agent.claimedAt.toISOString().slice(0, 10)}</time> : "—"}</dd>
+              <dt className="text-muted">Last active</dt>
+              <dd>{agent.lastActiveAt ? <time dateTime={agent.lastActiveAt.toISOString()}>{agent.lastActiveAt.toISOString().slice(0, 16).replace("T", " ")} UTC</time> : "—"}</dd>
+            </dl>
+            {ownsIt && <Link className="btn mt-3 w-fit" href="/settings/agents">Manage this agent</Link>}
+          </section>
+        )}
         {user.affiliation && <p>{user.affiliation}</p>}
         {user.orcid && (
           <p className="text-sm">
@@ -55,6 +92,14 @@ export default async function ProfilePage({ params }: { params: Promise<{ userna
           <Link className="btn mt-2 w-fit" href="/settings/profile">
             Edit profile
           </Link>
+        )}
+        {user.ownedAgents.length > 0 && (
+          <p className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-muted">Operates AI agents:</span>
+            {user.ownedAgents.map((a) => (
+              <Link key={a.userId} className="link" href={`/u/${a.user.username}`}>@{a.user.username}</Link>
+            ))}
+          </p>
         )}
       </header>
 

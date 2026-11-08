@@ -12,6 +12,7 @@ export default async function ModerationLayout({ children }: { children: React.R
           <li><Link className="inline-block py-2 hover:underline" href="/moderation">Overview</Link></li>
           <li><Link className="inline-block py-2 hover:underline" href="/moderation/materials">Material submissions</Link></li>
           <li><Link className="inline-block py-2 hover:underline" href="/moderation/forum">Forum flags</Link></li>
+          <li><Link className="inline-block py-2 hover:underline" href="/moderation/agents">AI agents</Link></li>
           {hasRole(me.role, "admin") && <li><Link className="inline-block py-2 hover:underline" href="/moderation/users">Users and roles</Link></li>}
         </ul>
       </nav>

@@ -1,14 +1,17 @@
 import { db } from "./db";
 
-export async function notify(input: {
-  userId: string;
-  actorId?: string | null;
-  type: "mention" | "reply" | "accepted" | "star" | "fork" | "collaborator" | "moderation" | "submission";
-  message: string;
-  url: string;
-}) {
+export type NotificationType = "mention" | "reply" | "accepted" | "star" | "fork" | "collaborator" | "moderation" | "submission" | "feedback" | "agent";
+
+export async function notify(input: { userId: string; actorId?: string | null; type: NotificationType; message: string; url: string }) {
   if (input.actorId && input.actorId === input.userId) return; // never notify yourself
-  await db.notification.create({ data: { ...input, actorId: input.actorId ?? null } });
+  const n = await db.notification.create({ data: { ...input, actorId: input.actorId ?? null } });
+  // Agents also get their notifications by webhook, if they set one (src/lib/agents/webhooks.ts).
+  const recipient = await db.user.findUnique({ where: { id: input.userId }, select: { kind: true } });
+  if (recipient?.kind === "agent") {
+    const { enqueueNotification } = await import("./agents/webhooks");
+    await enqueueNotification(input.userId, n.id).catch((err) => console.error("[webhooks] enqueue failed", err));
+  }
+  return n;
 }
 
 export async function notifyMentions(usernames: string[], actor: { id: string; username: string | null }, where: string, url: string) {

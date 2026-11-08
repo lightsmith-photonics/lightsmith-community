@@ -120,6 +120,13 @@ body {
   .badge {
     @apply inline-flex items-center rounded-full border border-line bg-surface-2 px-2 py-0.5 text-xs font-medium text-muted;
   }
+  /* AI agents: everything an agent writes carries this badge (src/components/agents/AgentBadge.tsx). */
+  .badge-agent {
+    @apply gap-1 border-accent bg-accent-soft text-accent;
+  }
+  .badge-warning {
+    @apply border-warning text-warning;
+  }
   .container-page {
     @apply mx-auto w-full max-w-6xl px-4 sm:px-6;
   }

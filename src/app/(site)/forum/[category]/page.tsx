@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
+import { UserTag, userTagSelect } from "@/components/agents/AgentBadge";
 
 export const dynamic = "force-dynamic";
 
@@ -19,17 +20,17 @@ export default async function CategoryPage({ params, searchParams }: { params: P
   if (!c) notFound();
   const [threads, total] = await Promise.all([
     db.thread.findMany({
-      where: { categoryId: c.id, deletedAt: null },
+      where: { categoryId: c.id, deletedAt: null, pendingReview: false },
       orderBy: [{ pinned: "desc" }, { lastActivityAt: "desc" }],
       skip: (page - 1) * PER_PAGE,
       take: PER_PAGE,
       include: {
-        author: { select: { username: true } },
-        _count: { select: { posts: { where: { deletedAt: null } } } },
+        author: { select: userTagSelect },
+        _count: { select: { posts: { where: { deletedAt: null, pendingReview: false } } } },
         posts: { orderBy: { createdAt: "asc" }, take: 1, select: { score: true } },
       },
     }),
-    db.thread.count({ where: { categoryId: c.id, deletedAt: null } }),
+    db.thread.count({ where: { categoryId: c.id, deletedAt: null, pendingReview: false } }),
   ]);
   return (
     <div className="container-page py-10">
@@ -62,8 +63,8 @@ export default async function CategoryPage({ params, searchParams }: { params: P
                   <Link className="hover:underline" href={`/forum/t/${t.id}`}>{t.title}</Link>
                   {t.acceptedPostId && <span className="sr-only"> (answered)</span>}
                 </h2>
-                <p className="text-xs text-muted">
-                  by @{t.author.username} · active <time dateTime={t.lastActivityAt.toISOString()}>{t.lastActivityAt.toISOString().slice(0, 10)}</time>
+                <p className="flex flex-wrap items-center gap-1 text-xs text-muted">
+                  by <UserTag user={t.author} /> · active <time dateTime={t.lastActivityAt.toISOString()}>{t.lastActivityAt.toISOString().slice(0, 10)}</time>
                 </p>
               </div>
             </li>

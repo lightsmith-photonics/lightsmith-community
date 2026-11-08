@@ -10,6 +10,11 @@ const nextConfig: NextConfig = {
   // The Docker image sets NEXT_OUTPUT=standalone; `next start` needs the default output.
   output: process.env.NEXT_OUTPUT === "standalone" ? "standalone" : undefined,
   poweredByHeader: false,
+  experimental: {
+    // Server actions take result uploads of up to 50 MB (see src/app/(site)/p/actions.ts) plus the
+    // form's other fields; Next's default is 1 MB. The actions check sizes themselves.
+    serverActions: { bodySizeLimit: "52mb" },
+  },
   async headers() {
     return [
       // Everything except /embed/* may not be framed by other sites.

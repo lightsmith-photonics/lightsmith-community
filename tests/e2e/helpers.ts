@@ -3,21 +3,23 @@ import AxeBuilder from "@axe-core/playwright";
 
 const MAILPIT = process.env.MAILPIT_URL ?? "http://localhost:58025";
 
-/** Latest magic link Mailpit received for `email` after `since`. */
-async function magicLink(email: string, since: number): Promise<string> {
+/** The first link matching `pattern` in the newest message Mailpit received for `email` after `since`. */
+export async function mailLink(email: string, since: number, pattern: RegExp): Promise<string> {
   for (let i = 0; i < 40; i++) {
     const res = await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent(`to:"${email}"`)}&limit=5`);
     const body = (await res.json()) as { messages: { ID: string; Created: string }[] };
-    const fresh = body.messages.find((m) => Date.parse(m.Created) >= since - 2000);
-    if (fresh) {
-      const msg = (await (await fetch(`${MAILPIT}/api/v1/message/${fresh.ID}`)).json()) as { Text: string; HTML: string };
-      const url = (msg.Text + msg.HTML).match(/https?:\/\/[^\s"'<>]+\/api\/auth\/callback\/nodemailer\?[^\s"'<>]+/)?.[0];
+    for (const m of body.messages.filter((m) => Date.parse(m.Created) >= since - 2000)) {
+      const msg = (await (await fetch(`${MAILPIT}/api/v1/message/${m.ID}`)).json()) as { Text: string; HTML: string };
+      const url = (msg.Text + msg.HTML).match(pattern)?.[0];
       if (url) return url.replace(/&amp;/g, "&");
     }
     await new Promise((r) => setTimeout(r, 250));
   }
-  throw new Error(`no magic link for ${email} in Mailpit`);
+  throw new Error(`no mail for ${email} matching ${pattern} in Mailpit`);
 }
+
+/** Latest magic link Mailpit received for `email` after `since`. */
+const magicLink = (email: string, since: number) => mailLink(email, since, /https?:\/\/[^\s"'<>]+\/api\/auth\/callback\/nodemailer\?[^\s"'<>]+/);
 
 /** Sign in with an email magic link, read from Mailpit (the real flow; no test backdoor). */
 export async function signIn(page: Page, email: string, callbackUrl = "/") {

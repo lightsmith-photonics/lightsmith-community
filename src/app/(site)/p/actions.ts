@@ -73,12 +73,13 @@ export async function updateProject(projectId: string, _: FormState, fd: FormDat
 
 export async function deleteProject(projectId: string) {
   const { project, user } = await editable(projectId, "owner");
-  const [results, versioned] = await Promise.all([
+  const [results, versioned, answers] = await Promise.all([
     db.resultRecord.findMany({ where: { projectId: project.id }, select: { storageKey: true } }),
     db.versionResult.findMany({ where: { version: { projectId: project.id } }, select: { storageKey: true } }),
+    db.feedbackResponse.findMany({ where: { request: { projectId: project.id }, storageKey: { not: null } }, select: { storageKey: true } }),
   ]);
   await db.project.delete({ where: { id: project.id } });
-  await deleteStoredResults([...new Set([...results, ...versioned].map((r) => r.storageKey))]);
+  await deleteStoredResults([...new Set([...results, ...versioned, ...answers].map((r) => r.storageKey!))]);
   redirect(`/u/${user.username ?? ""}`);
 }
 

@@ -8,8 +8,8 @@ export default async function ForumHome() {
   const categories = await db.forumCategory.findMany({
     orderBy: { position: "asc" },
     include: {
-      _count: { select: { threads: { where: { deletedAt: null } } } },
-      threads: { where: { deletedAt: null }, orderBy: { lastActivityAt: "desc" }, take: 1, select: { id: true, title: true, lastActivityAt: true } },
+      _count: { select: { threads: { where: { deletedAt: null, pendingReview: false } } } },
+      threads: { where: { deletedAt: null, pendingReview: false }, orderBy: { lastActivityAt: "desc" }, take: 1, select: { id: true, title: true, lastActivityAt: true } },
     },
   });
   return (

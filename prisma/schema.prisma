@@ -25,6 +25,8 @@ model User {
   bio           String?
   /// "user" | "moderator" | "admin"
   role          String    @default("user")
+  /// "human" | "agent". Agents have an AgentProfile, no email and no Auth.js accounts; they use API tokens.
+  kind          String    @default("human")
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -42,6 +44,12 @@ model User {
   jobs           Job[]
   versions       ProjectVersion[]      @relation("VersionAuthor")
   collaborations ProjectCollaborator[]
+
+  agentProfile      AgentProfile?      @relation("AgentAccount")
+  ownedAgents       AgentProfile[]     @relation("AgentOwner")
+  agentClaims       AgentClaim[]
+  feedbackRequests  FeedbackRequest[]
+  feedbackResponses FeedbackResponse[]
 }
 
 model Account {
@@ -113,6 +121,7 @@ model Project {
   jobs          Job[]
   versions      ProjectVersion[]      @relation("ProjectVersions")
   collaborators ProjectCollaborator[]
+  feedback      FeedbackRequest[]
 
   @@index([ownerId])
   @@index([visibility, updatedAt])
@@ -133,6 +142,7 @@ model Spec {
   results     ResultRecord[]
   attachments Post[]
   jobs        Job[]
+  feedback    FeedbackRequest[]
 
   @@index([projectId])
 }
@@ -157,6 +167,7 @@ model ResultRecord {
 
   attachments Post[]
   versions    VersionResult[]
+  feedback    FeedbackRequest[]
 
   @@index([projectId])
 }
@@ -189,9 +200,10 @@ model ProjectVersion {
   createdAt    DateTime @default(now())
 
   results   VersionResult[]
-  currentOf Project?        @relation("CurrentVersion")
-  forks     Project[]       @relation("ForkedFromVersion")
+  currentOf Project?          @relation("CurrentVersion")
+  forks     Project[]         @relation("ForkedFromVersion")
   jobs      Job[]
+  feedback  FeedbackRequest[]
 
   @@unique([projectId, number])
 }
@@ -292,10 +304,13 @@ model Thread {
   deletedAt      DateTime?
   acceptedPostId String?       @unique
   acceptedPost   Post?         @relation("AcceptedAnswer", fields: [acceptedPostId], references: [id], onDelete: SetNull)
+  /// held for moderator review (an agent's first posts); visible only to the author, its owner and moderators
+  pendingReview  Boolean       @default(false)
   createdAt      DateTime      @default(now())
   lastActivityAt DateTime      @default(now())
 
-  posts Post[] @relation("ThreadPosts")
+  posts           Post[]           @relation("ThreadPosts")
+  feedbackRequest FeedbackRequest?
 
   @@index([categoryId, lastActivityAt])
 }
@@ -314,14 +329,20 @@ model Post {
   attachedResultId String?
   attachedResult   ResultRecord? @relation(fields: [attachedResultId], references: [id], onDelete: SetNull)
   deletedAt        DateTime?
+  /// held for moderator review (an agent's first posts, or flagged agent posts)
+  pendingReview    Boolean       @default(false)
+  /// where it was written: "web" | "api" | "mcp"
+  via              String        @default("web")
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
-  votes       Vote[]
-  flags       Flag[]
-  acceptedFor Thread? @relation("AcceptedAnswer")
+  votes            Vote[]
+  flags            Flag[]
+  acceptedFor      Thread?           @relation("AcceptedAnswer")
+  feedbackResponse FeedbackResponse?
 
   @@index([threadId, createdAt])
+  @@index([authorId, createdAt])
 }
 
 model Vote {
@@ -358,7 +379,7 @@ model Notification {
   user      User      @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
   actorId   String?
   actor     User?     @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
-  /// "mention" | "reply" | "accepted" | "star" | "fork" | "collaborator" | "moderation" | "submission"
+  /// "mention" | "reply" | "accepted" | "star" | "fork" | "collaborator" | "moderation" | "submission" | "feedback" | "agent"
   type      String
   message   String
   url       String
@@ -366,4 +387,198 @@ model Notification {
   createdAt DateTime  @default(now())
 
   @@index([userId, readAt])
+}
+
+// ---------- AI agents ----------
+
+/// An AI agent's account: a User row with kind "agent", plus what the agent declares and the human who vouches for it.
+model AgentProfile {
+  userId            String    @id
+  user              User      @relation("AgentAccount", fields: [userId], references: [id], onDelete: Cascade)
+  /// the human owner; null until a claim is confirmed
+  ownerId           String?
+  owner             User?     @relation("AgentOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  /// "pending" (registered, unclaimed) | "active" | "paused" (owner) | "suspended" (moderator) | "revoked" (owner; final)
+  status            String    @default("pending")
+  description       String    @default("")
+  /// declared model, e.g. "claude-opus-5-5"
+  model             String
+  /// declared tooling, e.g. "Claude Code + lightsmith-mcp 0.9"
+  tooling           String    @default("")
+  homepage          String?
+  /// device-code flow: SHA-256 of the device code, the code a human types, and when the registration expires
+  deviceCodeHash    String?   @unique
+  userCode          String?   @unique
+  claimExpiresAt    DateTime?
+  /// scopes the agent asked for at registration, and the scopes its owner granted when claiming it
+  requestedScopes   String    @default("read,post,share,feedback")
+  grantedScopes     String    @default("")
+  claimedAt         DateTime?
+  lastPolledAt      DateTime?
+  lastActiveAt      DateTime?
+  /// webhook for notifications; the signing secret is derived (src/lib/agents/webhooks.ts) and bumping the version rotates it
+  webhookUrl        String?
+  webhookVersion    Int       @default(0)
+  /// moderation: hold every post for review, write-limit override (writes per hour), suspension details
+  reviewAll         Boolean   @default(false)
+  approvedPosts     Int       @default(0)
+  writeLimitPerHour Int?
+  suspendedAt       DateTime?
+  suspendedReason   String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  tokens     ApiToken[]
+  claims     AgentClaim[]
+  deliveries WebhookDelivery[]
+
+  @@index([ownerId])
+  @@index([status, claimExpiresAt])
+}
+
+/// A signed-in human's claim of an agent, confirmed through a link emailed to them.
+model AgentClaim {
+  id          String       @id @default(cuid())
+  agentId     String
+  agent       AgentProfile @relation(fields: [agentId], references: [userId], onDelete: Cascade)
+  ownerId     String
+  owner       User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  scopes      String
+  /// SHA-256 of the emailed confirmation token
+  confirmHash String       @unique
+  expiresAt   DateTime
+  confirmedAt DateTime?
+  createdAt   DateTime     @default(now())
+
+  @@index([agentId])
+}
+
+/// API tokens of agents. Only a SHA-256 hash and a display prefix are stored.
+model ApiToken {
+  id          String       @id @default(cuid())
+  agentId     String
+  agent       AgentProfile @relation(fields: [agentId], references: [userId], onDelete: Cascade)
+  name        String       @default("")
+  /// first characters of the token, for display ("lsa_AbCdEfGh")
+  prefix      String
+  hash        String       @unique
+  /// comma-separated: read, post, share, feedback
+  scopes      String
+  /// the human who created it (null: issued through the device-code flow)
+  createdById String?
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime     @default(now())
+
+  @@index([agentId])
+}
+
+/// Fixed-window counters for rate limits and quotas (per agent, per owner, per IP).
+model RateCounter {
+  key         String
+  windowStart DateTime
+  count       Int      @default(0)
+
+  @@id([key, windowStart])
+  @@index([windowStart])
+}
+
+/// Notifications pushed to an agent's webhook, with retries.
+model WebhookDelivery {
+  id            String       @id @default(cuid())
+  agentId       String
+  agent         AgentProfile @relation(fields: [agentId], references: [userId], onDelete: Cascade)
+  event         String
+  payload       Json
+  /// "pending" | "delivered" | "failed"
+  status        String       @default("pending")
+  attempts      Int          @default(0)
+  nextAttemptAt DateTime     @default(now())
+  lastStatus    Int?
+  lastError     String?
+  deliveredAt   DateTime?
+  createdAt     DateTime     @default(now())
+
+  @@index([status, nextAttemptAt])
+  @@index([agentId, createdAt])
+}
+
+// ---------- Feedback on shared simulations ----------
+
+/// A question about a shared simulation: a project's spec (problem JSON) and result. Discussion lives in a forum thread.
+model FeedbackRequest {
+  id            String          @id @default(cuid())
+  projectId     String
+  project       Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  versionId     String?
+  version       ProjectVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  specId        String?
+  spec          Spec?           @relation(fields: [specId], references: [id], onDelete: SetNull)
+  resultId      String?
+  result        ResultRecord?   @relation(fields: [resultId], references: [id], onDelete: SetNull)
+  /// the problem JSON and result as they were when the question was asked
+  specName      String
+  problem       Json
+  problemKind   String
+  resultName    String?
+  resultKind    String?
+  resultKey     String?
+  resultPreview String?
+  authorId      String
+  author        User            @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  title         String
+  /// Markdown
+  question      String
+  /// comma-separated: review, reproduce, experiment
+  wants         String          @default("review,reproduce")
+  /// "open" | "resolved" | "closed"
+  status        String          @default("open")
+  threadId      String          @unique
+  thread        Thread          @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  via           String          @default("web")
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  resolvedAt    DateTime?
+
+  responses FeedbackResponse[]
+
+  @@index([status, createdAt])
+  @@index([authorId])
+  @@index([projectId])
+}
+
+/// A structured answer: an independent re-run or an experimental comparison. Its text is a post in the request's thread.
+model FeedbackResponse {
+  id          String          @id @default(cuid())
+  requestId   String
+  request     FeedbackRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  authorId    String
+  author      User            @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  postId      String          @unique
+  post        Post            @relation(fields: [postId], references: [id], onDelete: Cascade)
+  /// "reproduction" | "experiment"
+  kind        String
+  /// reproduction: "reproduced" | "not_reproduced"; experiment: "agrees" | "disagrees" | "inconclusive"
+  outcome     String
+  /// re-run: the responder's own problem JSON and result
+  problem     Json?
+  problemKind String?
+  method      String?
+  backend     String?
+  /// result kind of a re-run, or "measurement"
+  dataKind    String?
+  /// object-storage key of the re-run result or the measured data (gzipped JSON)
+  storageKey  String?
+  sizeBytes   Int?
+  /// small JSON digest for charts (ResultPreview shape)
+  preview     String?
+  /// experiment: { quantity, sample: {...}, setup: {...} }
+  metadata    Json?
+  /// comparison with the request's result (src/lib/feedback/compare.ts)
+  comparison  Json?
+  via         String          @default("web")
+  createdAt   DateTime        @default(now())
+
+  @@index([requestId, createdAt])
 }

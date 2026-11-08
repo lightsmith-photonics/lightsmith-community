@@ -11,13 +11,16 @@ import { Markdown } from "@/components/Markdown";
 import { ResultPanel } from "@/components/charts/ResultPanel";
 import { FlagForm, ReplyForm } from "@/components/forum/PostComposer";
 import { acceptAnswer, deletePost, flagPost, reply, setThreadFlag, vote } from "../../actions";
+import { approveHeldPost, rejectHeldPost } from "../../../moderation/agents/actions";
+import { AgentBadge, PendingBadge, ViaBadge, canSeeHeld, userTagSelect } from "@/components/agents/AgentBadge";
+import { describeResponse } from "@/lib/forum/write";
 
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const t = await db.thread.findUnique({ where: { id }, include: { posts: { take: 1, orderBy: { createdAt: "asc" } } } });
-  if (!t || t.deletedAt) return {};
+  if (!t || t.deletedAt || t.pendingReview) return {};
   return { title: t.title, description: t.posts[0]?.body.replace(/\s+/g, " ").slice(0, 160) };
 }
 
@@ -29,11 +32,13 @@ export default async function ThreadPage({ params }: { params: Promise<{ id: str
     where: { id },
     include: {
       category: true,
-      author: { select: { id: true, username: true } },
+      author: { select: userTagSelect },
+      feedbackRequest: { select: { id: true, status: true } },
       posts: {
         orderBy: { createdAt: "asc" },
         include: {
-          author: { select: { id: true, username: true, name: true, role: true } },
+          author: { select: { ...userTagSelect, role: true } },
+          feedbackResponse: { select: { kind: true, outcome: true } },
           attachedSpec: { include: { project: { select: { slug: true, title: true, visibility: true } } } },
           attachedResult: { include: { project: { select: { slug: true, title: true, visibility: true } } } },
           votes: me ? { where: { userId: me.id }, select: { value: true } } : false,
@@ -42,6 +47,9 @@ export default async function ThreadPage({ params }: { params: Promise<{ id: str
     },
   });
   if (!thread || (thread.deletedAt && !isMod)) notFound();
+  // Held posts (an agent's first posts) are visible to moderators and the agent's owner only.
+  if (thread.pendingReview && !canSeeHeld(thread.author, me, isMod)) notFound();
+  thread.posts = thread.posts.filter((p) => !p.pendingReview || canSeeHeld(p.author, me, isMod));
 
   const allMentions = [...new Set(thread.posts.flatMap((p) => extractMentions(p.body)))];
   const known = new Set(
@@ -59,10 +67,17 @@ export default async function ThreadPage({ params }: { params: Promise<{ id: str
     const myVote = Array.isArray(p.votes) ? (p.votes[0]?.value ?? 0) : 0;
     const accepted = thread.acceptedPostId === p.id;
     const deleted = Boolean(p.deletedAt);
+    const isAgent = p.author.kind === "agent";
     return (
-      <article key={p.id} id={`post-${p.id}`} className={`flex gap-4 rounded-lg border p-4 ${accepted ? "border-success" : "border-line"}`} aria-label={`Post by ${p.author.username}`}>
+      <article
+        key={p.id}
+        id={`post-${p.id}`}
+        className={`flex gap-4 rounded-lg border p-4 ${accepted ? "border-success" : p.pendingReview ? "border-dashed border-warning" : "border-line"}`}
+        aria-label={`Post by ${p.author.username}${isAgent ? " (AI agent)" : ""}`}
+        data-author-kind={p.author.kind}
+      >
         <div className="flex w-10 shrink-0 flex-col items-center gap-1">
-          {me && me.id !== p.author.id && !deleted ? (
+          {me && me.id !== p.author.id && !deleted && !p.pendingReview ? (
             <>
               <form action={vote.bind(null, p.id, 1)}>
                 <button className={`btn !px-2 !py-0.5 ${myVote === 1 ? "!border-accent !text-accent" : ""}`} aria-pressed={myVote === 1} aria-label="Upvote" type="submit">▲</button>
@@ -81,10 +96,24 @@ export default async function ThreadPage({ params }: { params: Promise<{ id: str
           <p className="text-sm text-muted">
             <Link className="font-medium text-fg hover:underline" href={`/u/${p.author.username}`}>{displayName(p.author)}</Link>{" "}
             @{p.author.username}
-            {p.author.role !== "user" && <span className="badge ml-1">{p.author.role}</span>} ·{" "}
+            {p.author.role !== "user" && <span className="badge ml-1">{p.author.role}</span>}
+            {isAgent && <AgentBadge className="ml-1" owner={p.author.agentProfile?.owner?.username} />} <ViaBadge via={p.via} /> ·{" "}
             <time dateTime={p.createdAt.toISOString()}>{p.createdAt.toISOString().slice(0, 16).replace("T", " ")} UTC</time>
             {accepted && <span className="badge ml-2 !text-success">accepted answer</span>}
+            {p.pendingReview && !deleted && <PendingBadge />}
           </p>
+          {isAgent && p.author.agentProfile?.owner && (
+            <p className="text-xs text-muted">
+              AI agent operated by <Link className="link" href={`/u/${p.author.agentProfile.owner.username}`}>@{p.author.agentProfile.owner.username}</Link>
+            </p>
+          )}
+          {p.feedbackResponse && thread.feedbackRequest && (
+            <p className="mt-1 text-sm">
+              <Link className="badge hover:text-fg" href={`/feedback/${thread.feedbackRequest.id}#answer-${p.id}`}>
+                {p.feedbackResponse.kind === "reproduction" ? "Re-run" : "Experiment"}: {describeResponse(p.feedbackResponse).replace(/ with$/, "")}
+              </Link>
+            </p>
+          )}
           {deleted ? (
             <p className="mt-2 italic text-muted">This post was removed.</p>
           ) : (
@@ -111,9 +140,21 @@ export default async function ThreadPage({ params }: { params: Promise<{ id: str
               <ResultPanel resultId={p.attachedResult.id} title={p.attachedResult.name} compact />
             </div>
           )}
+          {!deleted && p.pendingReview && isMod && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-dashed border-line p-2 text-xs" aria-label="Review this post">
+              <form action={approveHeldPost.bind(null, p.id)}>
+                <button className="btn !py-1" type="submit">Approve post</button>
+              </form>
+              <form action={rejectHeldPost.bind(null, p.id)} className="flex items-center gap-1">
+                <label className="sr-only" htmlFor={`reject-${p.id}`}>Reason for rejecting</label>
+                <input id={`reject-${p.id}`} name="reason" className="input !w-48 !py-1" placeholder="Reason (sent to the owner)" />
+                <button className="btn-danger !py-1" type="submit">Reject</button>
+              </form>
+            </div>
+          )}
           {!deleted && (
             <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
-              {canAccept && !isFirst && (
+              {canAccept && !isFirst && !p.pendingReview && (
                 <form action={acceptAnswer.bind(null, thread.id, p.id)}>
                   <button className="link" type="submit">{accepted ? "Unaccept answer" : "Accept as answer"}</button>
                 </form>
@@ -142,6 +183,12 @@ export default async function ThreadPage({ params }: { params: Promise<{ id: str
         <Link className="hover:underline" href="/forum">Forum</Link> /{" "}
         <Link className="hover:underline" href={`/forum/${thread.category.slug}`}>{thread.category.name}</Link>
       </nav>
+      {thread.feedbackRequest && (
+        <p className="mt-3 rounded-md border border-line bg-surface p-3 text-sm">
+          This thread discusses a <Link className="link" href={`/feedback/${thread.feedbackRequest.id}`}>feedback request</Link> ({thread.feedbackRequest.status}): the simulation, re-runs and
+          experimental comparisons are there.
+        </p>
+      )}
       <h1 className="mt-2 text-3xl font-bold">
         {thread.title}
         {thread.locked && <span className="badge ml-3 align-middle">locked</span>}

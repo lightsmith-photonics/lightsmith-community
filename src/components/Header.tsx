@@ -12,6 +12,7 @@ const NAV = [
   { href: "/materials", label: "Materials" },
   { href: "/projects", label: "Projects" },
   { href: "/forum", label: "Forum" },
+  { href: "/feedback", label: "Feedback" },
   { href: "/docs", label: "Docs" },
   { href: "/pricing", label: "Pricing" },
 ];
@@ -83,6 +84,11 @@ export async function Header() {
                     <li>
                       <Link className="block rounded px-3 py-2 hover:bg-surface" href="/settings/profile">
                         Settings
+                      </Link>
+                    </li>
+                    <li>
+                      <Link className="block rounded px-3 py-2 hover:bg-surface" href="/settings/agents">
+                        My agents
                       </Link>
                     </li>
                     {isMod && (

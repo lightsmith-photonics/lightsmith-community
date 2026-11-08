@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { env } from "@/lib/env";
-import { retryDue } from "@/lib/agents/webhooks";
+import { purgeOldDeliveries, retryDue } from "@/lib/agents/webhooks";
 
 export const dynamic = "force-dynamic";
 
@@ -12,5 +12,5 @@ export async function POST(req: Request) {
   if (!secret || got.length !== want.length || !timingSafeEqual(got, want)) {
     return Response.json({ error: "unauthorized", message: "Set CRON_SECRET and send it as a bearer token." }, { status: 401 });
   }
-  return Response.json({ retried: await retryDue(100) });
+  return Response.json({ retried: await retryDue(100), purged: await purgeOldDeliveries() });
 }

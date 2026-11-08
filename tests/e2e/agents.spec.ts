@@ -650,6 +650,17 @@ test.describe("AI agents", () => {
         await db.webhookDelivery.update({ where: { id: row.id }, data: { nextAttemptAt: new Date() } }); // skip the 30 s wait, not the sweep
         await expect.poll(() => calls, { timeout: 40_000, intervals: [1000] }).toBeGreaterThanOrEqual(2);
         await expect.poll(async () => (await db.webhookDelivery.findUniqueOrThrow({ where: { id: row.id } })).status, { timeout: 5000 }).toBe("delivered");
+
+        // finished deliveries past the retention period are swept away; recent and pending ones stay
+        const profile = { agentId: row.agentId, event: "ping", payload: {} };
+        const longAgo = new Date(Date.now() - 40 * 86_400_000);
+        const oldDone = await db.webhookDelivery.create({ data: { ...profile, status: "delivered", createdAt: longAgo } });
+        const oldFailed = await db.webhookDelivery.create({ data: { ...profile, status: "failed", createdAt: longAgo } });
+        const oldPending = await db.webhookDelivery.create({ data: { ...profile, status: "pending", nextAttemptAt: new Date(Date.now() + 86_400_000), createdAt: longAgo } });
+        await expect.poll(async () => db.webhookDelivery.count({ where: { id: { in: [oldDone.id, oldFailed.id] } } }), { timeout: 90_000, intervals: [2000] }).toBe(0);
+        expect(await db.webhookDelivery.count({ where: { id: oldPending.id } })).toBe(1);
+        expect(await db.webhookDelivery.count({ where: { id: row.id } })).toBe(1);
+        await db.webhookDelivery.delete({ where: { id: oldPending.id } });
       } finally {
         server.close();
       }

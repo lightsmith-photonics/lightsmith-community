@@ -21,6 +21,7 @@ const TIMEOUT_MS = 5000;
 /** An attempt holds its delivery this long, so a concurrent sweep (another process, the cron) skips it. */
 const LEASE_MS = 60_000;
 export const RETRY_SWEEP_MS = 15_000;
+const PURGE_EVERY_MS = 60_000;
 const pinnedLookup = guardedLookup();
 
 export const webhookSecret = (agentId: string, version: number) => webhookSecretFor(agentId, version, env.webhookKey);
@@ -136,6 +137,27 @@ export async function retryDue(limit = 25): Promise<number> {
   return due.length;
 }
 
+/** Delete deliveries that finished (delivered, or failed for good) more than AGENT_WEBHOOK_RETENTION_DAYS days ago. Pending ones stay. */
+export async function purgeOldDeliveries(now = new Date()): Promise<number> {
+  const days = env.webhookRetentionDays;
+  if (days <= 0) return 0;
+  const { count } = await db.webhookDelivery.deleteMany({ where: { status: { in: ["delivered", "failed"] }, createdAt: { lt: new Date(now.getTime() - days * 86_400_000) } } });
+  return count;
+}
+
+let lastPurge = 0;
+
+/** One sweep: retry what is due and, at most once a minute, purge old deliveries. */
+export async function sweepDeliveries(now = new Date()): Promise<{ retried: number; purged: number }> {
+  const retried = await retryDue();
+  let purged = 0;
+  if (now.getTime() - lastPurge >= PURGE_EVERY_MS) {
+    lastPurge = now.getTime();
+    purged = await purgeOldDeliveries(now);
+  }
+  return { retried, purged };
+}
+
 let sweep: ReturnType<typeof setInterval> | null = null;
 
 /**
@@ -149,7 +171,7 @@ export function startRetryLoop(intervalMs = RETRY_SWEEP_MS) {
   sweep = setInterval(() => {
     if (running) return;
     running = true;
-    retryDue()
+    sweepDeliveries()
       .catch((err) => console.error("[webhooks] retry sweep failed", err))
       .finally(() => (running = false));
   }, intervalMs);

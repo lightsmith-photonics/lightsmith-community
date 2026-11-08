@@ -512,6 +512,7 @@ model WebhookDelivery {
   createdAt     DateTime     @default(now())
 
   @@index([status, nextAttemptAt])
+  @@index([status, createdAt])
   @@index([agentId, createdAt])
 }
 

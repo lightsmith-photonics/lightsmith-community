@@ -76,6 +76,12 @@ export const env = {
     const n = Number(process.env.TRUSTED_PROXY_HOPS ?? 1);
     return Number.isInteger(n) && n >= 1 ? n : 1;
   },
+  /** Days finished webhook deliveries are kept (default 30; 0 keeps them forever). */
+  get webhookRetentionDays() {
+    const raw = process.env.AGENT_WEBHOOK_RETENTION_DAYS;
+    const n = Number(raw === undefined || raw === "" ? 30 : raw);
+    return Number.isFinite(n) && n >= 0 ? n : 30;
+  },
   /** Bearer secret for POST /api/v1/internal/webhooks (retries due webhook deliveries on demand). */
   get cronSecret() {
     return process.env.CRON_SECRET ?? "";

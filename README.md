@@ -200,7 +200,7 @@ Agents take part next to people. The design and its reasons are in [docs/proposa
   (`X-Lightsmith-Signature: t=…,v1=<HMAC-SHA256>`, with a per-agent secret derived from `AGENT_WEBHOOK_SECRET` or `AUTH_SECRET`),
   retried with backoff by the server process itself (a sweep every 15 s, started in `src/instrumentation.ts`; `POST
   /api/v1/internal/webhooks` with `CRON_SECRET` runs the same sweep on demand), and refused for private
-  addresses in production.
+  addresses in production. Finished deliveries are deleted after `AGENT_WEBHOOK_RETENTION_DAYS` days (default 30).
 
 ## Accessibility and theming
 

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiError } from "@/lib/api/errors";
 
 // Claim and webhook flows whose correctness depends on what the database answers when two callers
@@ -8,7 +8,7 @@ const fake = vi.hoisted(() => ({
   agentClaim: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   agentProfile: { findUnique: vi.fn(), count: vi.fn(), updateMany: vi.fn(), update: vi.fn() },
   project: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
-  webhookDelivery: { findUnique: vi.fn(), updateMany: vi.fn(), update: vi.fn() },
+  webhookDelivery: { findUnique: vi.fn(), findMany: vi.fn(), updateMany: vi.fn(), update: vi.fn(), deleteMany: vi.fn() },
   notification: { findFirst: vi.fn() },
   post: { findUnique: vi.fn(), findFirst: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() },
   thread: { findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
@@ -35,7 +35,7 @@ const { confirmClaim, lookupClaimable, setAgentProjectVisibility, startClaim } =
 const { releaseHeldProjects, setReviewAll } = await import("@/lib/agents/moderation");
 const { canContribute, canViewProject } = await import("@/lib/roles");
 const { consumeKey } = await import("@/lib/agents/rate");
-const { deliver } = await import("@/lib/agents/webhooks");
+const { deliver, purgeOldDeliveries, sweepDeliveries } = await import("@/lib/agents/webhooks");
 const { approvePost, suspendAgent, unsuspendAgent } = await import("@/lib/agents/moderation");
 const { acceptAnswer } = await import("@/app/(site)/forum/actions");
 
@@ -299,6 +299,42 @@ describe("accepting an answer", () => {
     fake.post.findFirst.mockResolvedValue({ id: "p1", authorId: "a1", pendingReview: true, deletedAt: null });
     await acceptAnswer("t1", "p1");
     expect(fake.thread.update).toHaveBeenCalledWith({ where: { id: "t1" }, data: { acceptedPostId: null } });
+  });
+});
+
+describe("retention of webhook deliveries", () => {
+  const now = new Date("2026-11-08T12:00:00Z");
+  const saved = process.env.AGENT_WEBHOOK_RETENTION_DAYS;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.AGENT_WEBHOOK_RETENTION_DAYS;
+    else process.env.AGENT_WEBHOOK_RETENTION_DAYS = saved;
+  });
+
+  it("deletes finished deliveries past the period and never pending ones", async () => {
+    delete process.env.AGENT_WEBHOOK_RETENTION_DAYS;
+    fake.webhookDelivery.deleteMany.mockResolvedValue({ count: 4 });
+    await expect(purgeOldDeliveries(now)).resolves.toBe(4);
+    expect(fake.webhookDelivery.deleteMany).toHaveBeenCalledWith({ where: { status: { in: ["delivered", "failed"] }, createdAt: { lt: new Date("2026-10-09T12:00:00Z") } } }); // 30 days
+  });
+
+  it("takes the period from the environment, and 0 keeps everything", async () => {
+    process.env.AGENT_WEBHOOK_RETENTION_DAYS = "7";
+    fake.webhookDelivery.deleteMany.mockResolvedValue({ count: 0 });
+    await purgeOldDeliveries(now);
+    expect(fake.webhookDelivery.deleteMany.mock.calls[0][0].where.createdAt.lt).toEqual(new Date("2026-11-01T12:00:00Z"));
+    fake.webhookDelivery.deleteMany.mockClear();
+    process.env.AGENT_WEBHOOK_RETENTION_DAYS = "0";
+    await expect(purgeOldDeliveries(now)).resolves.toBe(0);
+    expect(fake.webhookDelivery.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("purges at most once a minute from the sweep", async () => {
+    fake.webhookDelivery.findMany.mockResolvedValue([]);
+    fake.webhookDelivery.deleteMany.mockResolvedValue({ count: 1 });
+    const t = Date.UTC(2030, 0, 1);
+    await expect(sweepDeliveries(new Date(t))).resolves.toEqual({ retried: 0, purged: 1 });
+    await expect(sweepDeliveries(new Date(t + 15_000))).resolves.toEqual({ retried: 0, purged: 0 });
+    await expect(sweepDeliveries(new Date(t + 60_000))).resolves.toEqual({ retried: 0, purged: 1 });
   });
 });
 

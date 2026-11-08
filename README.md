@@ -68,7 +68,7 @@ is documented in [`.env.example`](.env.example). The main groups:
   Migrations are in `prisma/migrations`, including GIN indexes for forum full-text search.
 - **Object storage:** `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_REGION`, `S3_FORCE_PATH_STYLE`,
   `S3_CREATE_BUCKET`. The app speaks plain S3, so any S3-compatible store works in production: AWS S3, Cloudflare R2, Backblaze B2
-  and others. Compose uses SeaweedFS (`chrislusf/seaweedfs:3.97`, Apache-2.0) as a local S3 server. Result JSON (up to 50 MB; mode fields can be several MB) is stored gzipped and inflated as it is streamed out; `next start` compresses responses again for clients that accept it.
+  and others. Compose uses SeaweedFS (`chrislusf/seaweedfs:3.97`, Apache-2.0) as a local S3 server. Result JSON (up to 50 MB; mode fields can be several MB) is stored gzipped and inflated as it is streamed out, so it leaves the app as plain JSON: compress it at the reverse proxy (Cloudflare does; nginx needs `gzip_types application/json`).
   Database rows keep a key and a small preview, so no state lives on the app's filesystem.
 - **Auth:** `AUTH_SECRET`, `AUTH_URL`; GitHub OAuth when `AUTH_GITHUB_ID`/`AUTH_GITHUB_SECRET` are set; email magic links when
   `EMAIL_SERVER` is set. Outside production without SMTP, links are printed to the server log. Production sends through

@@ -10,9 +10,10 @@ import {
 
 // S3-compatible object storage for large payloads (result JSON). MinIO in docker-compose,
 // any S3 service in production. Objects are stored gzipped. Responses inflate them as a stream, so
-// multi-megabyte field data is never held in memory; `next start` compresses the response again for
-// clients that accept it. Route handlers cannot pass the stored bytes through with Content-Encoding:
-// gzip, because Next (since 15.5.29) drops that header and clients would receive undecodable bytes.
+// multi-megabyte field data is never held in memory. Route handlers cannot pass the stored bytes through
+// with Content-Encoding: gzip, because Next (since 15.5.29) drops that header and clients would receive
+// undecodable bytes. `next start` does not compress route handler responses either, so these leave the app
+// as plain JSON: compression is the reverse proxy's job (Cloudflare does it; nginx needs gzip_types application/json).
 
 let client: S3Client | null = null;
 let bucketReady: Promise<void> | null = null;

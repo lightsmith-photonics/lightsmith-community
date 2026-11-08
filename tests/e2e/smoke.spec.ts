@@ -12,7 +12,7 @@ test.describe("public pages", () => {
     await email.fill("someone,other(comment)@example.test");
     await page.getByRole("button", { name: "Email me a sign-in link" }).click();
     await expect(page).toHaveURL(/\/signin\?error=InvalidEmail/);
-    await expect(page.getByRole("alert")).toContainText("does not look like an email address");
+    await expect(page.getByRole("alert").filter({ hasText: "does not look like an email address" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Check your email" })).toHaveCount(0);
   });
 

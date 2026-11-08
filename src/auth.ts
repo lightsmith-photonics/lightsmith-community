@@ -4,6 +4,7 @@ import GitHub from "next-auth/providers/github";
 import Nodemailer from "next-auth/providers/nodemailer";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { db } from "@/lib/db";
+import { normaliseSignInEmail } from "@/lib/email";
 import { env } from "@/lib/env";
 import { randomSuffix, usernameFrom } from "@/lib/slug";
 
@@ -12,12 +13,13 @@ function providers(): Provider[] {
   const list: Provider[] = [];
   if (env.github) list.push(GitHub({ clientId: env.github.id, clientSecret: env.github.secret }));
   if (env.emailServer) {
-    list.push(Nodemailer({ server: env.emailServer, from: env.emailFrom }));
+    list.push(Nodemailer({ server: env.emailServer, from: env.emailFrom, normalizeIdentifier: normaliseSignInEmail }));
   } else if (env.emailToConsole) {
     list.push(
       Nodemailer({
         server: "smtp://localhost:25",
         from: env.emailFrom,
+        normalizeIdentifier: normaliseSignInEmail,
         async sendVerificationRequest({ identifier, url }) {
           console.info(`\n[auth] magic link for ${identifier}:\n${url}\n`);
         },

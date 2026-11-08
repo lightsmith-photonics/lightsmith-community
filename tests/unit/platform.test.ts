@@ -1,3 +1,6 @@
+import katex from "katex";
+import { normaliseSignInEmail } from "@/lib/email";
+import { KATEX_OPTIONS } from "@/lib/katex-options";
 import { describe, expect, it } from "vitest";
 import { decodeJwt } from "jose";
 import { issuePlatformJwt, verifyPlatformJwt } from "@/lib/platform-jwt";
@@ -163,5 +166,40 @@ describe("mock materials API", () => {
     await expect(api.submissions("pending", user)).rejects.toThrow(/403/);
     expect((await api.submissions("pending", mod)).some((s) => s.id === sub.id)).toBe(true);
     expect((await api.review(sub.id, "approve", "ok", mod)).status).toBe("approved");
+  });
+});
+
+describe("sign-in addresses", () => {
+  it("accept plain addresses, normalised", () => {
+    expect(normaliseSignInEmail("  Ada@Example.TEST ")).toBe("ada@example.test");
+    expect(normaliseSignInEmail("a.b+tag@sub.example.org")).toBe("a.b+tag@sub.example.org");
+    expect(normaliseSignInEmail("maría@correo.example")).toBe("maría@correo.example");
+  });
+
+  it("refuse anything a mail parser could read as a comment, a group or another recipient", () => {
+    for (const bad of ["a,b@example.test", "a(comment)@example.test", "a;b@example.test", "a<b>@example.test", "a b@example.test", '"a"@example.test', "a:b@example.test", "a@b@example.test", "a＠b@example.test", "a@example", "@example.test", "a@", "", null, undefined]) {
+      expect(() => normaliseSignInEmail(bad), String(bad)).toThrow("Invalid email address format.");
+    }
+  });
+
+  it("refuse oversized input before any parser sees it", () => {
+    expect(() => normaliseSignInEmail(`${"a".repeat(300)}@example.test`)).toThrow();
+    expect(() => normaliseSignInEmail(`${"(".repeat(1_000_000)}@example.test`)).toThrow();
+  });
+});
+
+describe("KaTeX options for user-written LaTeX", () => {
+  const link = String.raw`\href{https://evil.example}{x}`;
+  const anchor = /<a href="https:\/\/evil\.example/;
+
+  it("keep links off even with a polluted Object.prototype", () => {
+    const proto = Object.prototype as unknown as { trust?: boolean };
+    proto.trust = true;
+    try {
+      expect(katex.renderToString(link, { throwOnError: false })).toMatch(anchor); // what the explicit option prevents
+      expect(katex.renderToString(link, { ...KATEX_OPTIONS })).not.toMatch(anchor);
+    } finally {
+      delete proto.trust;
+    }
   });
 });

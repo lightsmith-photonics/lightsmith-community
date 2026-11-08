@@ -3,6 +3,18 @@ import { expectAccessible, signIn } from "./helpers";
 import scatteringSpec from "../../fixtures/demo/scattering.spec.json";
 
 test.describe("public pages", () => {
+  test("the sign-in form refuses addresses a mail parser could misread", async ({ page }) => {
+    await page.goto("/signin");
+    const email = page.getByLabel("Email");
+    await email.evaluate((el: HTMLInputElement) => {
+      el.type = "text"; // what a script posting to the form is not held to either
+    });
+    await email.fill("someone,other(comment)@example.test");
+    await page.getByRole("button", { name: "Email me a sign-in link" }).click();
+    await expect(page).toHaveURL(/\/signin\?error=/);
+    await expect(page.getByRole("heading", { name: "Check your email" })).toHaveCount(0);
+  });
+
   test("landing page and both themes pass axe", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByRole("heading", { level: 1 })).toContainText("open photonics suite");

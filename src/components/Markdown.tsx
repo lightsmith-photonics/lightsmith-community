@@ -3,6 +3,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeHighlight from "rehype-highlight";
+import { KATEX_OPTIONS } from "@/lib/katex-options";
 
 /**
  * Markdown with GFM, $inline$ / $$display$$ LaTeX (KaTeX) and highlighted code blocks.
@@ -13,7 +14,7 @@ export function Markdown({ children, className = "" }: { children: string; class
     <div className={`prose-os ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: "ignore" }], [rehypeHighlight, { detect: false, ignoreMissing: true }]]}
+        rehypePlugins={[[rehypeKatex, KATEX_OPTIONS], [rehypeHighlight, { detect: false, ignoreMissing: true }]]}
         components={{
           a: ({ href, children, ...rest }) => {
             const external = href?.startsWith("http");

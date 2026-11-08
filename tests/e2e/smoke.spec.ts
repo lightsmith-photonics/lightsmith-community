@@ -7,7 +7,7 @@ test.describe("public pages", () => {
     await page.goto("/signin");
     const email = page.getByLabel("Email");
     await email.evaluate((el: HTMLInputElement) => {
-      el.type = "text"; // what a script posting to the form is not held to either
+      el.form!.noValidate = true; // the browser's check is one a script posting to the form is not held to either
     });
     await email.fill("someone,other(comment)@example.test");
     await page.getByRole("button", { name: "Email me a sign-in link" }).click();

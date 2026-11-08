@@ -14,7 +14,7 @@ import { answerFeedback, createFeedbackRequest, parseWants, type Answer } from "
 
 export type FeedbackState = { ok: boolean; message: string } | null;
 
-const MAX_FILE = 900_000; // server actions accept about 1 MB; larger data goes through the API
+const MAX_FILE = 20_000_000; // the same limit as /api/v1 answers (LARGE_BODY)
 
 export async function createFeedbackAction(_: FeedbackState, fd: FormData): Promise<FeedbackState> {
   const me = await getCurrentUser();
@@ -57,7 +57,7 @@ export async function createFeedbackAction(_: FeedbackState, fd: FormData): Prom
 async function text(fd: FormData, field: string, fileField: string): Promise<string | { error: string }> {
   const file = fd.get(fileField);
   if (file instanceof File && file.size > 0) {
-    if (file.size > MAX_FILE) return { error: "Files up to about 900 kB can be uploaded here; send larger data through the API." };
+    if (file.size > MAX_FILE) return { error: "Files can be up to 20 MB." };
     return file.text();
   }
   return String(fd.get(field) ?? "");

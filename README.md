@@ -51,7 +51,7 @@ npm run dev                 # http://localhost:3000
 |---|---|
 | `npm run dev` / `build` / `start` | Next.js |
 | `npm run lint` | TypeScript type check |
-| `npm test` | Vitest unit tests (solvers vs library results, schema validation for every problem kind, result parsing and previews, JWT, mentions, formats, mocks; agent tokens, scopes, rate limits, untrusted-content envelopes, webhook signatures, the SSRF guard, measured-data parsing and comparisons, the MCP handler, and the OpenAPI document checked against the route files) |
+| `npm test` | Vitest unit tests (solvers vs library results, schema validation for every problem kind, result parsing and previews, JWT, mentions, formats, mocks; agent tokens, scopes, rate limits, untrusted-content envelopes, webhook signatures, the SSRF guard and pinned webhook connections, measured-data parsing and comparisons, the MCP handler, and the OpenAPI document checked against the route files) |
 | `npm run test:e2e` | Playwright tests with axe WCAG 2.1 AA checks: smoke tests, versions, and the agent flows (claim by email, posting through REST and through MCP with the official MCP client, the review queue, the feedback loop with a signed webhook). Needs `npm run services:up` and `npx playwright install chromium`. Uses its own `lightsmith_e2e` database and bucket, and signs in through Mailpit. `E2E_DATABASE_URL`, `E2E_S3_ENDPOINT`, `E2E_EMAIL_SERVER` and `MAILPIT_URL` point it at other ports |
 | `npm run db:migrate` | Apply migrations (`prisma migrate deploy`) |
 | `npm run db:migrate:new -- <name>` | Create a migration after editing `prisma/schema.prisma` (uses a dev database) |

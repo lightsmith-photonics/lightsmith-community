@@ -3,16 +3,20 @@ import { isIP } from "node:net";
 import type { Prisma } from "@prisma/client";
 import { db } from "../db";
 import { env } from "../env";
+import { guardedLookup, postJson } from "./outbound";
 import { checkWebhookUrlSyntax, isPrivateAddress, signPayload, webhookSecretFor } from "./signing";
 import { UNTRUSTED_NOTICE, authorRef, untrusted } from "./untrusted";
 
 // Webhooks push an agent's notifications to its own HTTPS endpoint, signed with a per-agent secret
 // (derived from AGENT_WEBHOOK_SECRET or AUTH_SECRET; never stored). Delivery is attempted right away
 // and retried with backoff; agents can always poll GET /api/v1/notifications as well. URLs are
-// checked against private address ranges when set and again before every delivery (DNS rebinding).
+// checked against private address ranges when set and before every delivery, and the delivery
+// itself connects only to an address that passes the same check (outbound.ts), which closes the
+// gap a DNS-rebinding host would use between the check and the connection.
 
 export const BACKOFF_SECONDS = [30, 120, 600, 3600, 6 * 3600];
 const TIMEOUT_MS = 5000;
+const pinnedLookup = guardedLookup();
 
 export const webhookSecret = (agentId: string, version: number) => webhookSecretFor(agentId, version, env.webhookKey);
 
@@ -89,27 +93,21 @@ export async function deliver(id: string): Promise<{ status: string; httpStatus?
   const body = JSON.stringify({ id: d.id, type: d.event, created_at: d.createdAt.toISOString(), data: d.payload });
   const t = Math.floor(Date.now() / 1000);
   try {
-    const res = await fetch(check.url, {
-      method: "POST",
-      redirect: "manual",
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": "LightsmithCommunity-Webhooks/1",
-        "X-Lightsmith-Event": d.event,
-        "X-Lightsmith-Delivery": d.id,
-        "X-Lightsmith-Signature": signPayload(webhookSecret(d.agent.userId, d.agent.webhookVersion), body, t),
-      },
-      body,
-    });
-    await res.body?.cancel().catch(() => undefined);
-    if (res.status >= 200 && res.status < 300) {
-      await db.webhookDelivery.update({ where: { id }, data: { status: "delivered", attempts: d.attempts + 1, lastStatus: res.status, deliveredAt: new Date(), lastError: null } });
-      return { status: "delivered", httpStatus: res.status };
+    const headers = {
+      "Content-Type": "application/json",
+      "User-Agent": "LightsmithCommunity-Webhooks/1",
+      "X-Lightsmith-Event": d.event,
+      "X-Lightsmith-Delivery": d.id,
+      "X-Lightsmith-Signature": signPayload(webhookSecret(d.agent.userId, d.agent.webhookVersion), body, t),
+    };
+    const status = await postJson(check.url, headers, body, { timeoutMs: TIMEOUT_MS, lookup: env.webhookAllowPrivate ? undefined : pinnedLookup });
+    if (status >= 200 && status < 300) {
+      await db.webhookDelivery.update({ where: { id }, data: { status: "delivered", attempts: d.attempts + 1, lastStatus: status, deliveredAt: new Date(), lastError: null } });
+      return { status: "delivered", httpStatus: status };
     }
-    return fail(`HTTP ${res.status}`, res.status);
+    return fail(`HTTP ${status}`, status);
   } catch (err) {
-    return fail((err as Error).name === "TimeoutError" ? `no response within ${TIMEOUT_MS / 1000} s` : (err as Error).message);
+    return fail((err as Error).message);
   }
 }
 

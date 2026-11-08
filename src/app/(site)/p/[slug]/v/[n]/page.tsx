@@ -15,6 +15,7 @@ import { CodeBlock } from "@/components/CodeBlock";
 import { CopyButton } from "@/components/CopyButton";
 import { RestoreForm } from "@/components/projects/VersionForms";
 import { VersionNav, utcTime } from "@/components/projects/VersionNav";
+import { UserTag } from "@/components/agents/AgentBadge";
 import { forkProject, restoreVersionAction } from "../../../actions";
 
 export const dynamic = "force-dynamic";
@@ -55,7 +56,7 @@ export default async function VersionPage({ params }: { params: Promise<{ slug: 
             </h1>
             <p className="mt-1">{v.message || defaultMessage(v)}</p>
             <p className="mt-1 text-sm text-muted">
-              {v.author ? <Link className="hover:underline" href={`/u/${v.author.username}`}>@{v.author.username}</Link> : "deleted user"} ·{" "}
+              {v.author ? <UserTag user={v.author} /> : "deleted user"} ·{" "}
               <time dateTime={v.createdAt.toISOString()}>{utcTime(v.createdAt)}</time>
               {v.restoredFrom && (
                 <>

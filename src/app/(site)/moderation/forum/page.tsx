@@ -2,6 +2,7 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { requireRole } from "@/lib/session";
 import { deletePost, resolveFlag } from "../../forum/actions";
+import { AgentBadge } from "@/components/agents/AgentBadge";
 
 export const metadata = { title: "Forum flags" };
 export const dynamic = "force-dynamic";
@@ -13,7 +14,7 @@ export default async function FlagQueue() {
     orderBy: { createdAt: "asc" },
     include: {
       reporter: { select: { username: true } },
-      post: { include: { author: { select: { username: true } }, thread: { select: { id: true, title: true } } } },
+      post: { include: { author: { select: { username: true, kind: true, agentProfile: { select: { owner: { select: { username: true } } } } } }, thread: { select: { id: true, title: true } } } },
     },
   });
   if (flags.length === 0) return <p className="text-muted">No open reports.</p>;
@@ -22,7 +23,8 @@ export default async function FlagQueue() {
       {flags.map((f) => (
         <li key={f.id} className="card">
           <p className="text-sm">
-            <strong>@{f.reporter.username}</strong> reported a post by <strong>@{f.post.author.username}</strong> in{" "}
+            <strong>@{f.reporter.username}</strong> reported a post by <strong>@{f.post.author.username}</strong>
+            {f.post.author.kind === "agent" && <AgentBadge className="ml-1" owner={f.post.author.agentProfile?.owner?.username} />} in{" "}
             <Link className="link" href={`/forum/t/${f.post.thread.id}#post-${f.post.id}`}>{f.post.thread.title}</Link>
           </p>
           <p className="mt-1 text-sm">Reason: {f.reason}</p>

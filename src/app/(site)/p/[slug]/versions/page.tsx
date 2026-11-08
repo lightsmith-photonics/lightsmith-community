@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/lib/session";
 import { listVersions, loadProjectForVersions } from "@/lib/projects";
 import { defaultMessage } from "@/lib/versions/snapshot";
 import { VersionNav, utcTime } from "@/components/projects/VersionNav";
+import { UserTag } from "@/components/agents/AgentBadge";
 import { forkProject } from "../../actions";
 
 export const dynamic = "force-dynamic";
@@ -63,7 +64,7 @@ export default async function VersionHistory({ params }: { params: Promise<{ slu
                   {v.restoredFrom && <span className="badge ml-2">restored from v{v.restoredFrom}</span>}
                 </h2>
                 <p className="text-sm text-muted">
-                  {v.author ? <Link className="hover:underline" href={`/u/${v.author.username}`}>@{v.author.username}</Link> : "deleted user"} ·{" "}
+                  {v.author ? <UserTag user={v.author} /> : "deleted user"} ·{" "}
                   <time dateTime={v.createdAt.toISOString()}>{utcTime(v.createdAt)}</time> · {v.specs.length} spec{v.specs.length === 1 ? "" : "s"}
                   {v.specs.length > 0 && <> ({v.specs.map((s) => s.name).join(", ")})</>} · {v._count.results} result{v._count.results === 1 ? "" : "s"}
                   {v._count.forks > 0 && <> · {v._count.forks} fork{v._count.forks === 1 ? "" : "s"}</>}

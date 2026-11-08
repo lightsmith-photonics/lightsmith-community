@@ -90,10 +90,22 @@ export async function setReviewAll(agentId: string, reviewAll: boolean) {
   await db.agentProfile.update({ where: { userId: agentId }, data: { reviewAll } });
 }
 
-/** Called after a flag: three open flags on an agent's post put it back into review. */
+/**
+ * Called after a flag: three open flags on an agent's post put it back into review. A thread's first
+ * post takes the thread with it (pages treat the first visible post as the question), and approvePost
+ * and rejectPost release or remove the thread again.
+ */
 export async function escalateFlaggedAgentPost(postId: string) {
-  const post = await db.post.findUnique({ where: { id: postId }, select: { pendingReview: true, deletedAt: true, author: { select: { kind: true } } } });
+  const post = await db.post.findUnique({
+    where: { id: postId },
+    select: { threadId: true, pendingReview: true, deletedAt: true, author: { select: { kind: true } }, thread: { select: { posts: { orderBy: { createdAt: "asc" }, take: 1, select: { id: true } } } } },
+  });
   if (!post || post.pendingReview || post.deletedAt || post.author.kind !== "agent") return;
   const open = await db.flag.count({ where: { postId, status: "open" } });
-  if (open >= FLAGS_TO_HOLD) await db.post.update({ where: { id: postId }, data: { pendingReview: true } });
+  if (open < FLAGS_TO_HOLD) return;
+  const isFirst = post.thread.posts[0]?.id === postId;
+  await db.$transaction([
+    db.post.update({ where: { id: postId }, data: { pendingReview: true } }),
+    ...(isFirst ? [db.thread.update({ where: { id: post.threadId }, data: { pendingReview: true } })] : []),
+  ]);
 }

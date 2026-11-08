@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AgentBadge } from "@/components/agents/AgentBadge";
 
 export interface ProjectCardData {
   slug: string;
@@ -7,7 +8,7 @@ export interface ProjectCardData {
   visibility: string;
   tags: string;
   updatedAt: Date;
-  owner: { username: string | null; name: string | null };
+  owner: { username: string | null; name: string | null; kind: string; agentProfile: { owner: { username: string | null } | null } | null };
   _count: { stars: number; specs: number; results: number; forks: number };
 }
 
@@ -21,6 +22,7 @@ export function ProjectCard({ p }: { p: ProjectCardData }) {
       </h3>
       <p className="mt-0.5 text-xs text-muted">
         by {p.owner.username ? <Link href={`/u/${p.owner.username}`} className="hover:underline">@{p.owner.username}</Link> : (p.owner.name ?? "unknown")}
+        {p.owner.kind === "agent" && <AgentBadge className="ml-1" owner={p.owner.agentProfile?.owner?.username} />}
         {p.visibility !== "public" && <span className="badge ml-2">{p.visibility}</span>}
       </p>
       <p className="mt-2 line-clamp-3 flex-1 text-sm text-muted">{p.description || "No description."}</p>
@@ -52,6 +54,6 @@ export const projectCardSelect = {
   visibility: true,
   tags: true,
   updatedAt: true,
-  owner: { select: { username: true, name: true } },
+  owner: { select: { username: true, name: true, kind: true, agentProfile: { select: { owner: { select: { username: true } } } } } },
   _count: { select: { stars: true, specs: true, results: true, forks: true } },
 } as const;

@@ -5,12 +5,14 @@ import type { CurrentUser } from "./session";
 import { parseSnapshot } from "./versions/snapshot";
 
 const collaborators = { select: { userId: true, user: { select: { username: true, name: true } } } } as const;
+/** Enough to label an author or owner as an AI agent and name who operates it. */
+const agentLabel = { kind: true, agentProfile: { select: { owner: { select: { username: true } } } } } as const;
 
 export async function loadProject(slug: string, viewer: CurrentUser | null) {
   const project = await db.project.findUnique({
     where: { slug },
     include: {
-      owner: { select: { id: true, username: true, name: true, kind: true, agentProfile: { select: { owner: { select: { username: true } } } } } },
+      owner: { select: { id: true, username: true, name: true, ...agentLabel } },
       feedback: { where: { thread: { deletedAt: null, pendingReview: false } }, orderBy: { createdAt: "desc" }, take: 10, select: { id: true, title: true, status: true, resultId: true } },
       forkedFrom: { select: { slug: true, title: true, owner: { select: { username: true } } } },
       forkedFromVersion: { select: { number: true } },
@@ -41,7 +43,7 @@ export async function loadResult(id: string, viewer: CurrentUser | null) {
 export async function loadProjectForVersions(slug: string, viewer: CurrentUser | null) {
   const project = await db.project.findUnique({
     where: { slug },
-    include: { owner: { select: { id: true, username: true, name: true } }, collaborators, currentVersion: { select: { number: true } } },
+    include: { owner: { select: { id: true, username: true, name: true, ...agentLabel } }, collaborators, currentVersion: { select: { number: true } } },
   });
   return project && canViewProject(project, viewer) ? project : null;
 }
@@ -50,7 +52,7 @@ export async function listVersions(projectId: string) {
   const rows = await db.projectVersion.findMany({
     where: { projectId },
     orderBy: { number: "desc" },
-    include: { author: { select: { username: true, name: true } }, _count: { select: { results: true, forks: true } } },
+    include: { author: { select: { username: true, name: true, ...agentLabel } }, _count: { select: { results: true, forks: true } } },
   });
   return rows.map(({ specs, ...v }) => ({ ...v, specs: parseSnapshot(specs) }));
 }
@@ -59,7 +61,7 @@ export async function loadVersion(projectId: string, number: number) {
   if (!Number.isSafeInteger(number) || number < 1) return null;
   const v = await db.projectVersion.findUnique({
     where: { projectId_number: { projectId, number } },
-    include: { author: { select: { username: true, name: true } }, results: { orderBy: { createdAt: "desc" } } },
+    include: { author: { select: { username: true, name: true, ...agentLabel } }, results: { orderBy: { createdAt: "desc" } } },
   });
   return v ? { ...v, specs: parseSnapshot(v.specs) } : null;
 }

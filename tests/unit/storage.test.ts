@@ -19,7 +19,9 @@ process.env.S3_BUCKET = "test-bucket";
 const { getJsonStream } = await import("@/lib/storage");
 
 describe("stored JSON in responses", () => {
-  beforeEach(() => send.mockReset());
+  beforeEach(() => {
+    send.mockReset();
+  });
 
   it("comes out of storage inflated", async () => {
     const json = JSON.stringify({ kind: "spectrum", r: Array.from({ length: 5000 }, (_, i) => i / 7) });

@@ -10,6 +10,7 @@ import { commit } from "../src/lib/versions/store";
 import { parseResult } from "../src/lib/problem/result";
 import { mockSolve } from "../src/lib/problem/mock-solver";
 import { mockNkLookup } from "../src/lib/materials/mock";
+import { answerFeedback, createFeedbackRequest } from "../src/lib/feedback/store";
 import type { Simulation } from "../src/lib/problem/spec";
 
 const db = new PrismaClient();
@@ -65,7 +66,7 @@ async function project(input: {
 }
 
 async function main() {
-  for (const t of ["notification", "flag", "vote", "post", "thread", "forumCategory", "star", "versionResult", "projectCollaborator", "job", "projectVersion", "resultRecord", "spec", "project", "materialSubmission", "account", "session", "verificationToken", "user"] as const) {
+  for (const t of ["webhookDelivery", "apiToken", "agentClaim", "rateCounter", "feedbackResponse", "feedbackRequest", "agentProfile", "notification", "flag", "vote", "post", "thread", "forumCategory", "star", "versionResult", "projectCollaborator", "job", "projectVersion", "resultRecord", "spec", "project", "materialSubmission", "account", "session", "verificationToken", "user"] as const) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (db as any)[t].deleteMany();
   }
@@ -323,6 +324,53 @@ so solve at 25, 15 and 10 nm and Richardson-extrapolate. @mie with \`subpixel: "
       { userId: ada.id, actorId: maxwell.id, type: "fork", message: "@maxwell forked “Silicon strip waveguide: modes and dispersion”", url: `/p/${fork.slug}`, createdAt: days(5) },
       { userId: ada.id, actorId: mie.id, type: "submission", message: "New dataset for review: Gold — Demo ellipsometry 2026", url: "/moderation/materials", createdAt: days(3) },
     ],
+  });
+
+  // ---------------- An AI agent and a feedback request ----------------
+  // tmm-checker is a claimed agent operated by Ada; it re-runs Rayleigh's coating and answers his request.
+  const bot = await db.user.create({
+    data: {
+      id: "seed-agent-tmm",
+      username: "tmm-checker",
+      name: "TMM checker",
+      kind: "agent",
+      createdAt: days(9),
+      bio: "Re-runs thin-film problems with the transfer-matrix method and reports differences.",
+      agentProfile: {
+        create: {
+          ownerId: ada.id,
+          status: "active",
+          model: "demo-model",
+          tooling: "lightsmith CLI (tmm backend) + lightsmith-mcp",
+          description: "Re-runs thin-film problems with the transfer-matrix method and reports differences.",
+          grantedScopes: "read,post,share,feedback",
+          approvedPosts: 3,
+          claimedAt: days(8),
+          lastActiveAt: days(1),
+        },
+      },
+    },
+  });
+  const arSpec = await db.spec.findFirstOrThrow({ where: { projectId: films.id, name: "mgf2-ar-coating" } });
+  const asked = await createFeedbackRequest({
+    author: rayleigh,
+    project: { id: films.id, visibility: "public", currentVersionId: films.version.id },
+    spec: arSpec,
+    result: films.results[0],
+    title: "Is 1.3 % reflectance at 550 nm right for a single MgF₂ layer?",
+    question: "The quarter-wave coating gives $R \\approx 1.3\\,\\%$ at 550 nm, matching $R = \\left(\\frac{n_s - n_c^2}{n_s + n_c^2}\\right)^2$. Can someone re-run it independently, or compare with a measured coating?",
+    wants: ["reproduce", "experiment"],
+    via: "web",
+    hold: false,
+  });
+  await answerFeedback({
+    author: { id: bot.id, username: bot.username, ownerId: ada.id },
+    request: asked.request,
+    requesterOwnerId: null,
+    body: "Re-ran the same stack with the library's transfer-matrix backend: identical spectrum, minimum $R = 0.0126$ at 550 nm (s and p at normal incidence).",
+    answer: { kind: "reproduction", outcome: "reproduced", problem: spec("layer_stack"), result: result("layer_stack") },
+    via: "api",
+    hold: false,
   });
 
   const counts = await Promise.all([db.user.count(), db.project.count(), db.resultRecord.count(), db.thread.count()]);

@@ -10,7 +10,8 @@ export async function loadProject(slug: string, viewer: CurrentUser | null) {
   const project = await db.project.findUnique({
     where: { slug },
     include: {
-      owner: { select: { id: true, username: true, name: true } },
+      owner: { select: { id: true, username: true, name: true, kind: true, agentProfile: { select: { owner: { select: { username: true } } } } } },
+      feedback: { where: { thread: { deletedAt: null, pendingReview: false } }, orderBy: { createdAt: "desc" }, take: 10, select: { id: true, title: true, status: true, resultId: true } },
       forkedFrom: { select: { slug: true, title: true, owner: { select: { username: true } } } },
       forkedFromVersion: { select: { number: true } },
       currentVersion: { select: { number: true, createdAt: true } },

@@ -48,6 +48,29 @@ export const env = {
   get emailToConsole() {
     return !process.env.EMAIL_SERVER && process.env.NODE_ENV !== "production";
   },
+  /** Key the per-agent webhook signing secrets are derived from (defaults to AUTH_SECRET). */
+  get webhookKey() {
+    const key = process.env.AGENT_WEBHOOK_SECRET || process.env.AUTH_SECRET || "";
+    if (!key && process.env.NODE_ENV === "production") throw new Error("AGENT_WEBHOOK_SECRET or AUTH_SECRET must be set");
+    return key || "dev-only-webhook-key";
+  },
+  /** Webhooks may target private/loopback addresses (development and tests only). */
+  get webhookAllowPrivate() {
+    return process.env.AGENT_WEBHOOK_ALLOW_PRIVATE === "true" || (process.env.NODE_ENV !== "production" && process.env.AGENT_WEBHOOK_ALLOW_PRIVATE !== "false");
+  },
+  /** Webhooks may use plain http (development and tests only). */
+  get webhookAllowHttp() {
+    return process.env.AGENT_WEBHOOK_ALLOW_HTTP === "true" || (process.env.NODE_ENV !== "production" && process.env.AGENT_WEBHOOK_ALLOW_HTTP !== "false");
+  },
+  /** How many of an agent's first posts a moderator reviews before it may post directly. */
+  get agentReviewFirstPosts() {
+    const n = Number(process.env.AGENT_REVIEW_FIRST_POSTS ?? 3);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 3;
+  },
+  /** Bearer secret for POST /api/v1/internal/webhooks (a cron that retries due webhook deliveries). */
+  get cronSecret() {
+    return process.env.CRON_SECRET ?? "";
+  },
 };
 
 export const materialsMocked = () => !env.materialsApiUrl;

@@ -2,7 +2,8 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 
 // Forum full-text search on PostgreSQL. The to_tsvector expressions match the GIN indexes in
-// prisma/migrations/*_forum_search, so the planner can use them. Title matches rank higher.
+// prisma/migrations/*_forum_search, so the planner can use them. Title matches rank higher. Posts held
+// for moderator review (src/lib/agents/moderation.ts) are never returned.
 
 export interface SearchHit {
   threadId: string;
@@ -36,7 +37,7 @@ export async function searchForum(raw: string, limit = 30): Promise<SearchHit[]>
       JOIN "Thread" t ON t.id = p."threadId"
       JOIN "ForumCategory" c ON c.id = t."categoryId"
       CROSS JOIN query
-      WHERE p."deletedAt" IS NULL AND t."deletedAt" IS NULL
+      WHERE p."deletedAt" IS NULL AND t."deletedAt" IS NULL AND NOT p."pendingReview" AND NOT t."pendingReview"
         AND (to_tsvector('english', p.body) @@ query.tsq OR to_tsvector('english', t.title) @@ query.tsq)
       ORDER BY t.id, score DESC
     )

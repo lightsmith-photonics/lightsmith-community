@@ -6,6 +6,7 @@ const baseURL = process.env.E2E_BASE_URL ?? `http://localhost:${port}`;
 // Smoke tests run a production build against the docker-compose services (`npm run services:up`):
 // a separate `lightsmith_e2e` database and bucket, and Mailpit for magic-link sign-in.
 // Migrations are applied with `migrate deploy` (non-destructive); the seed refills its own tables.
+// E2E_DATABASE_URL, E2E_S3_ENDPOINT, E2E_EMAIL_SERVER and MAILPIT_URL point the run at other ports.
 export default defineConfig({
   testDir: "tests/e2e",
   fullyParallel: false,
@@ -25,12 +26,22 @@ export default defineConfig({
         env: {
           DATABASE_URL: process.env.E2E_DATABASE_URL ?? "postgresql://lightsmith:lightsmith@localhost:54320/lightsmith_e2e",
           S3_BUCKET: "lightsmith-e2e",
-          EMAIL_SERVER: "smtp://localhost:51025",
-          S3_ENDPOINT: "http://localhost:59000",
+          EMAIL_SERVER: process.env.E2E_EMAIL_SERVER ?? "smtp://localhost:51025",
+          S3_ENDPOINT: process.env.E2E_S3_ENDPOINT ?? "http://localhost:59000",
+          // The seed runs before `next start` and does not read .env: give it the compose dev credentials.
+          S3_ACCESS_KEY_ID: process.env.S3_ACCESS_KEY_ID ?? "lightsmith",
+          S3_SECRET_ACCESS_KEY: process.env.S3_SECRET_ACCESS_KEY ?? "lightsmith-dev-secret",
+          S3_CREATE_BUCKET: "true",
           MATERIALS_API_URL: "",
           COMPUTE_API_URL: "",
           AUTH_URL: baseURL,
           SITE_URL: baseURL,
+          // Agents: review only the first post (tests approve it), many registrations from one IP,
+          // and webhooks to the test's own loopback receiver (production builds refuse those by default).
+          AGENT_REVIEW_FIRST_POSTS: "1",
+          LIMIT_IP_REGISTER_PER_HOUR: "1000",
+          AGENT_WEBHOOK_ALLOW_PRIVATE: "true",
+          AGENT_WEBHOOK_ALLOW_HTTP: "true",
         },
       },
 });

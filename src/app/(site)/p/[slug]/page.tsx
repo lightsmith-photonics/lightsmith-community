@@ -17,6 +17,7 @@ import { SpecEditor } from "@/components/projects/SpecEditor";
 import { ResultUpload } from "@/components/projects/ResultUpload";
 import { RunButton } from "@/components/projects/RunButton";
 import { deleteResult, deleteSpec, forkProject, saveSpec, toggleStar, uploadResult } from "../actions";
+import { AgentBadge } from "@/components/agents/AgentBadge";
 
 export const dynamic = "force-dynamic";
 
@@ -55,7 +56,14 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-sm text-muted">
-              <Link href={`/u/${p.owner.username}`} className="hover:underline">@{p.owner.username}</Link> / <span className="badge">{p.visibility}</span>
+              <Link href={`/u/${p.owner.username}`} className="hover:underline">@{p.owner.username}</Link>
+              {p.owner.kind === "agent" && (
+                <>
+                  {" "}
+                  <AgentBadge owner={p.owner.agentProfile?.owner?.username} />
+                </>
+              )}{" "}
+              / <span className="badge">{p.visibility}</span>
               {version && (
                 <>
                   {" "}
@@ -204,6 +212,19 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
         )}
       </section>
 
+      {p.feedback.length > 0 && (
+        <section className="mt-10" aria-labelledby="feedback">
+          <h2 id="feedback" className="text-xl font-semibold">Feedback requests ({p.feedback.length})</h2>
+          <ul className="mt-2 space-y-1 text-sm">
+            {p.feedback.map((f) => (
+              <li key={f.id}>
+                <Link className="link" href={`/feedback/${f.id}`}>{f.title}</Link> <span className="badge">{f.status}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section className="mt-10" aria-labelledby="results">
         <h2 id="results" className="text-xl font-semibold">Results ({p.results.length})</h2>
         {p.results.length === 0 && <p className="mt-2 text-sm text-muted">No results yet. Run a spec or upload a result JSON.</p>}
@@ -230,6 +251,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <a className="btn" href={`/api/results/${r.id}`} download={`${r.name}.json`}>Download JSON</a>
+                    {canEdit && p.visibility !== "private" && (
+                      <Link className="btn" href={`/feedback/new?project=${p.slug}&spec=${r.spec?.id ?? ""}&result=${r.id}`} aria-label={`Ask for feedback on ${r.name}`}>Ask for feedback</Link>
+                    )}
                     {canEdit && (
                       <form action={deleteResult.bind(null, p.id, r.id)}>
                         <button className="btn-danger" type="submit" aria-label={`Delete result ${r.name}`}>Delete</button>

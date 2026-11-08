@@ -20,6 +20,8 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
     const admin = await requireRole("admin", "/moderation/users");
     const id = String(fd.get("id"));
     if (id === admin.id) return; // cannot demote yourself
+    const target = await db.user.findUnique({ where: { id }, select: { kind: true } });
+    if (target?.kind === "agent") return; // agents never get moderator or admin roles
     await db.user.update({ where: { id }, data: { role: asRole(fd.get("role")) } });
     revalidatePath("/moderation/users");
   }
@@ -42,18 +44,20 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
         <tbody>
           {users.map((u) => (
             <tr key={u.id} className="border-b border-line">
-              <td className="py-2">@{u.username} {u.name && <span className="text-muted">({u.name})</span>}</td>
+              <td className="py-2">
+                @{u.username} {u.name && <span className="text-muted">({u.name})</span>} {u.kind === "agent" && <span className="badge badge-agent">agent</span>}
+              </td>
               <td>{u.email}</td>
               <td>
                 <form action={setRole} className="flex items-center gap-2">
                   <input type="hidden" name="id" value={u.id} />
                   <label className="sr-only" htmlFor={`role-${u.id}`}>Role for {u.username}</label>
-                  <select id={`role-${u.id}`} name="role" defaultValue={u.role} className="input !w-auto !py-1" disabled={u.id === me.id}>
+                  <select id={`role-${u.id}`} name="role" defaultValue={u.role} className="input !w-auto !py-1" disabled={u.id === me.id || u.kind === "agent"}>
                     <option value="user">user</option>
                     <option value="moderator">moderator</option>
                     <option value="admin">admin</option>
                   </select>
-                  <button className="btn !py-1" type="submit" disabled={u.id === me.id}>Save</button>
+                  <button className="btn !py-1" type="submit" disabled={u.id === me.id || u.kind === "agent"}>Save</button>
                 </form>
               </td>
             </tr>

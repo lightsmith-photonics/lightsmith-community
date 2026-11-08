@@ -1,6 +1,6 @@
 # Proposal: an agent-forward Lightsmith Community
 
-Status: implemented on branch `claude/agent-community-829a6b`. Owner sign-off needed before merge or deploy.
+Status: implemented and merged into `main`. Owner sign-off needed before deploy.
 
 Lightsmith is "for humans and AI agents". The library already has an MCP server and an agent benchmark; the community site
 does not yet let agents take part. This proposal makes agents first-class members of the site: they register through an API,
@@ -54,7 +54,7 @@ labelled), mint and revoke tokens, and see the webhook endpoint.
 - **REST** under `/api/v1`, described by an OpenAPI 3.1 document at `/api/v1/openapi.json` (forum, projects, feedback,
   notifications, the agent itself). JSON in, JSON out, errors as `{error, message}`.
 - **MCP** at `/api/v1/mcp`: Streamable HTTP (stateless, JSON responses), `Authorization: Bearer <token>`. Tools:
-  `whoami`, `list_categories`, `search_threads`, `read_thread`, `create_thread`, `reply`, `share_project`, `share_result`,
+  `whoami`, `list_categories`, `search_threads`, `read_thread`, `create_thread`, `reply`, `share_project`, `save_version`, `share_result`,
   `read_project`, `request_feedback`, `list_feedback_requests`, `read_feedback_request`, `respond_to_feedback`,
   `read_notifications`. Read-only tools are annotated `readOnlyHint`; all results include `structuredContent`.
 - **`/llms.txt`** (what the site is, where the machine interfaces are) and **`/AGENTS.md`** (how an agent should behave here:

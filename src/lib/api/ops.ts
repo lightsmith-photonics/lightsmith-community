@@ -4,13 +4,13 @@ import { env } from "../env";
 import { canContribute, canViewProject } from "../roles";
 import { parseTags } from "../projects";
 import { uniqueSlug } from "../slug";
-import { validateProblem } from "../problem/problem";
+import { problemTooLarge, validateProblem } from "../problem/problem";
 import { parseResult } from "../problem/result";
 import { saveResult } from "../results-store";
-import { commit } from "../versions/store";
+import { commit, saveSpecs } from "../versions/store";
 import { searchForum } from "../forum/search";
 import { writeReply, writeThread } from "../forum/write";
-import { requireScope, type AgentContext } from "../agents/auth";
+import { requireScope, requireWriteToken, type AgentContext } from "../agents/auth";
 import { checkAgentPost, shouldHold } from "../agents/moderation";
 import { consumeFor, usage } from "../agents/rate";
 import { rulesFor, type Action } from "../agents/limits";
@@ -18,7 +18,7 @@ import { sendPing, validateWebhookUrl, webhookSecret } from "../agents/webhooks"
 import { UNTRUSTED_NOTICE, authorRef, untrusted, untrustedJson } from "../agents/untrusted";
 import { answerFeedback, assertCanAskAbout, createFeedbackRequest, parseWants, visibleProjectFilter, type Answer } from "../feedback/store";
 import { readPreview } from "../results-store";
-import { ApiError, badRequest, notFound } from "./errors";
+import { ApiError, badRequest, conflict, notFound } from "./errors";
 import { api, authorSelect, presentAgentProfile, presentAuthor, presentNotification, presentPost, presentProject, presentResultMeta, presentThreadSummary, site } from "./present";
 
 // Operations of the agent API. REST routes (src/app/api/v1) and MCP tools (./mcp-tools.ts) both call
@@ -36,8 +36,7 @@ async function spend(ctx: AgentContext, action: Action) {
   Object.assign(ctx.headers, await consumeFor(action, { id: ctx.agent.id, ownerId: ctx.agent.ownerId, writeLimitPerHour: ctx.agent.writeLimitPerHour }));
 }
 
-const heldMessage = (n: number) =>
-  `Held for moderator review: an agent's first ${n} posts are checked by a person before others see them. You, your owner and moderators can see it now; you will be notified when it is approved.`;
+const HELD_MESSAGE = "Held for moderator review: a person checks this agent's posts before others see them. You, your owner and moderators can see it now; you will be notified of the decision.";
 
 // ---------------------------------------------------------------- the agent itself
 
@@ -49,6 +48,7 @@ export async function whoami(ctx: AgentContext) {
   const p = u.agentProfile!;
   const rules = (["read", "write", "share", "feedback"] as Action[]).flatMap((a) => rulesFor(a, { id: ctx.agent.id, ownerId: ctx.agent.ownerId, writeLimitPerHour: p.writeLimitPerHour }));
   return {
+    notice: UNTRUSTED_NOTICE,
     agent: presentAgentProfile(u),
     token: { prefix: ctx.token.prefix, scopes: ctx.token.scopes, expires_at: ctx.token.expiresAt?.toISOString() ?? null },
     review: { held_until_approved: shouldHold(p), approved_posts: p.approvedPosts, required_approvals: env.agentReviewFirstPosts, review_all: p.reviewAll },
@@ -59,6 +59,7 @@ export async function whoami(ctx: AgentContext) {
 }
 
 export async function updateMe(ctx: AgentContext, body: { model?: string; tooling?: string; description?: string; homepage?: string | null; webhook_url?: string | null; rotate_webhook_secret?: boolean }) {
+  requireWriteToken(ctx);
   const data: Prisma.AgentProfileUpdateInput = {};
   if (body.model !== undefined) data.model = body.model.trim();
   if (body.tooling !== undefined) data.tooling = body.tooling.trim();
@@ -88,8 +89,10 @@ export async function updateMe(ctx: AgentContext, body: { model?: string; toolin
 }
 
 export async function pingWebhook(ctx: AgentContext) {
+  requireWriteToken(ctx);
   const p = await db.agentProfile.findUniqueOrThrow({ where: { userId: ctx.agent.id }, select: { webhookUrl: true } });
   if (!p.webhookUrl) throw badRequest("Set webhook_url first (PATCH /api/v1/me).");
+  await spend(ctx, "write"); // it makes the site send a request, so it does not run on the much larger read budget
   const out = await sendPing(ctx.agent.id);
   return { delivered: out.status === "delivered", status: out.status, http_status: out.httpStatus ?? null, error: out.error ?? null };
 }
@@ -129,16 +132,23 @@ export async function listThreads(ctx: AgentContext, q: { query?: string; catego
   }
   const before = q.before ? new Date(q.before) : null;
   if (before && Number.isNaN(before.getTime())) throw badRequest("before must be an ISO timestamp (the last_activity_at of the last thread you saw).");
-  const threads = await db.thread.findMany({
-    where: { deletedAt: null, ...visibleTo(ctx), ...(q.category ? { category: { slug: q.category } } : {}), ...(before ? { lastActivityAt: { lt: before } } : {}) },
-    orderBy: [{ lastActivityAt: "desc" }],
+  const where = { deletedAt: null, ...visibleTo(ctx), ...(q.category ? { category: { slug: q.category } } : {}) } satisfies Prisma.ThreadWhereInput;
+  let threads = await db.thread.findMany({
+    where: { ...where, ...(before ? { lastActivityAt: { lt: before } } : {}) },
+    orderBy: [{ lastActivityAt: "desc" }, { id: "desc" }],
     take: limit,
     include: threadInclude(ctx),
   });
+  if (threads.length === limit) {
+    // The next page starts strictly before the last timestamp, so threads sharing it all go on this page.
+    const edge = threads[threads.length - 1].lastActivityAt;
+    const ties = await db.thread.findMany({ where: { ...where, lastActivityAt: edge, id: { notIn: threads.map((t) => t.id) } }, orderBy: { id: "desc" }, include: threadInclude(ctx) });
+    threads = threads.concat(ties);
+  }
   return {
     notice: UNTRUSTED_NOTICE,
     threads: threads.map(presentThreadSummary),
-    ...(threads.length === limit ? { next_before: threads[threads.length - 1].lastActivityAt.toISOString() } : {}),
+    ...(threads.length >= limit ? { next_before: threads[threads.length - 1].lastActivityAt.toISOString() } : {}),
   };
 }
 
@@ -193,10 +203,11 @@ export async function createThread(ctx: AgentContext, body: { category: string; 
   const { thread } = await writeThread({ author: ctx.user, categoryId: category.id, title: body.title.trim(), body: body.body, attachment, via: ctx.via, hold });
   const t = await visibleThread(ctx, thread.id);
   return {
+    notice: UNTRUSTED_NOTICE,
     thread: presentThreadSummary(t),
     post: presentPost(t.posts[0], { threadId: t.id }),
     pending_review: hold,
-    message: hold ? heldMessage(env.agentReviewFirstPosts) : "Posted.",
+    message: hold ? HELD_MESSAGE : "Posted.",
   };
 }
 
@@ -210,7 +221,7 @@ export async function reply(ctx: AgentContext, threadId: string, body: { body: s
   const hold = shouldHold(ctx.agent);
   const post = await writeReply({ author: ctx.user, threadId, body: body.body, attachment, via: ctx.via, hold });
   const full = await db.post.findUniqueOrThrow({ where: { id: post.id }, include: postInclude });
-  return { post: presentPost(full, { threadId }), pending_review: hold, message: hold ? heldMessage(env.agentReviewFirstPosts) : "Posted." };
+  return { notice: UNTRUSTED_NOTICE, post: presentPost(full, { threadId }), pending_review: hold, message: hold ? HELD_MESSAGE : "Posted." };
 }
 
 // ---------------------------------------------------------------- projects and results
@@ -251,6 +262,7 @@ export async function shareProject(ctx: AgentContext, body: ShareBody) {
     const name = s.name.trim();
     if (names.has(name)) throw badRequest(`specs[${i}].name "${name}" is used twice.`);
     names.add(name);
+    if (problemTooLarge(s.problem)) throw new ApiError(413, "too_large", `specs[${i}] (${name}) is larger than 2 MB.`);
     const v = validateProblem(s.problem);
     if (!v.ok) throw new ApiError(422, "invalid_spec", `specs[${i}] (${name}) does not validate against the Lightsmith problem schema.`, { issues: v.issues });
     return { name, kind: v.kind, json: JSON.stringify(v.problem, null, 2) };
@@ -285,9 +297,32 @@ export async function shareProject(ctx: AgentContext, body: ShareBody) {
   }
   const out = presentProject(await visibleProject(ctx, project.slug));
   return {
+    notice: UNTRUSTED_NOTICE,
     project: out,
-    ...(visibility !== wanted ? { note: "Made unlisted instead of public until a moderator has approved your first posts. Its owner (you) can change this later through the website." } : {}),
+    ...(visibility !== wanted
+      ? { note: "Created unlisted instead of public because your posts are still reviewed: it is reachable by its link but not listed. Projects you share after a moderator has approved your first posts stay public." }
+      : {}),
   };
+}
+
+export async function saveVersion(ctx: AgentContext, slug: string, body: { specs: { id?: string; name: string; problem: Record<string, unknown> }[]; message?: string; base?: number }) {
+  requireScope(ctx, "share");
+  const p = await visibleProject(ctx, slug);
+  if (!canContribute(p, ctx.user)) throw new ApiError(403, "forbidden", "Only the project's owner and collaborators can save versions. Share your own project instead.");
+  const names = new Set<string>();
+  const specs = body.specs.map((s, i) => {
+    const name = s.name.trim();
+    if (names.has(name)) throw badRequest(`specs[${i}].name "${name}" is used twice.`);
+    names.add(name);
+    if (problemTooLarge(s.problem)) throw new ApiError(413, "too_large", `specs[${i}] (${name}) is larger than 2 MB.`);
+    const v = validateProblem(s.problem);
+    if (!v.ok) throw new ApiError(422, "invalid_spec", `specs[${i}] (${name}) does not validate against the Lightsmith problem schema.`, { issues: v.issues });
+    return { id: s.id ?? null, name, kind: v.kind, problem: v.problem };
+  });
+  await spend(ctx, "share");
+  const out = await saveSpecs(p.id, specs, ctx.agent.id, body.message?.trim() || `Updated by @${ctx.agent.username} (${ctx.via})`, body.base ?? null);
+  if ("conflict" in out) throw conflict(`The project is at v${out.conflict}, not v${body.base}. Read it again and retry.`);
+  return { notice: UNTRUSTED_NOTICE, version: out.version.number, created: out.created, project: presentProject(await visibleProject(ctx, slug)) };
 }
 
 function findSpec<S extends { id: string; name: string }>(p: { specs: S[] }, ref: string | undefined): S | null {
@@ -305,7 +340,7 @@ export async function shareResult(ctx: AgentContext, slug: string, body: { spec:
   if (!parsed.ok) throw new ApiError(422, "invalid_result", `The result does not parse: ${parsed.error}`);
   await spend(ctx, "share");
   const r = await saveResult({ projectId: p.id, specId: spec.id, name: body.name.trim(), result: parsed.result });
-  return { result: presentResultMeta({ ...r, spec: { name: spec.name } }, p.owner), project: { slug: p.slug, url: site(`/p/${p.slug}#result-${r.id}`) } };
+  return { notice: UNTRUSTED_NOTICE, result: presentResultMeta({ ...r, spec: { name: spec.name } }, p.owner), project: { slug: p.slug, url: site(`/p/${p.slug}#result-${r.id}`) } };
 }
 
 /** Stored object of a result the agent may see (streamed by the REST route). */
@@ -350,6 +385,7 @@ export async function requestFeedback(ctx: AgentContext, body: FeedbackBody) {
     throw badRequest("Send either `project` (with `spec`/`result` ids or names) or an inline `problem`/`result`, not both.");
   }
   const p = await visibleProject(ctx, slug);
+  assertCanAskAbout(p, ctx.user); // before spending the quota
   const spec = findSpec(p, body.spec);
   if (!spec) throw badRequest(body.spec ? `spec "${body.spec}" is not in this project.` : "This project has several specs: say which one with `spec`.");
   let result = null as (typeof p.results)[number] | null;
@@ -372,7 +408,7 @@ export async function requestFeedback(ctx: AgentContext, body: FeedbackBody) {
     via: ctx.via,
     hold,
   });
-  return { feedback_request: await presentFeedback(ctx, out.request.id), pending_review: hold, message: hold ? heldMessage(env.agentReviewFirstPosts) : "Asked. You will be notified of every answer." };
+  return { notice: UNTRUSTED_NOTICE, feedback_request: await presentFeedback(ctx, out.request.id), pending_review: hold, message: hold ? HELD_MESSAGE : "Asked. You will be notified of every answer." };
 }
 
 const feedbackInclude = {
@@ -385,7 +421,6 @@ const feedbackInclude = {
 type FeedbackRow = Prisma.FeedbackRequestGetPayload<{ include: typeof feedbackInclude }>;
 
 function presentFeedbackRow(ctx: AgentContext, r: FeedbackRow, full: boolean) {
-  assertCanAskAbout(p, ctx.user); // before spending the quota
   const ref = authorRef(r.author);
   const answers = r.responses.filter((x) => !x.post.deletedAt && (!x.post.pendingReview || x.authorId === ctx.user.id));
   const counts = {
@@ -461,6 +496,7 @@ export async function listFeedback(ctx: AgentContext, q: { status?: string; want
       ...(q.wants ? { wants: { contains: q.wants } } : {}),
       ...(q.mine ? { authorId: ctx.user.id } : {}),
       thread: { deletedAt: null, OR: [{ pendingReview: false }, { authorId: ctx.user.id }] },
+      project: visibleProjectFilter(ctx.user),
     },
     orderBy: { createdAt: "desc" },
     take: clampLimit(q.limit),
@@ -496,7 +532,6 @@ type RespondBody = {
   problem?: Record<string, unknown>;
   result?: Record<string, unknown>;
   measurement?: { quantity: string; data: unknown; sample?: Record<string, unknown>; setup?: Record<string, unknown> };
-      project: visibleProjectFilter(ctx.user),
 };
 
 export async function respondToFeedback(ctx: AgentContext, id: string, body: RespondBody) {
@@ -526,10 +561,11 @@ export async function respondToFeedback(ctx: AgentContext, id: string, body: Res
   const fresh = await loadFeedback(ctx, id);
   const presented = presentFeedbackRow(ctx, fresh, true);
   return {
+    notice: UNTRUSTED_NOTICE,
     ...(out.response ? { answer: presented.answers?.find((a) => a.id === out.response!.id) } : { comment: { post_id: out.post.id, url: site(`/feedback/${id}#post-${out.post.id}`) } }),
     feedback_request: { id, url: presented.url, counts: presented.counts },
     pending_review: hold,
-    message: hold ? heldMessage(env.agentReviewFirstPosts) : "Answered. The requester has been notified.",
+    message: hold ? HELD_MESSAGE : "Answered. The requester has been notified.",
   };
 }
 

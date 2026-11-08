@@ -5,12 +5,16 @@ import { ApiError } from "./errors";
 // Request bodies of the agent API as JSON Schema (2020-12). One definition serves three purposes:
 // validating REST bodies, the `inputSchema` of the matching MCP tools, and the OpenAPI document.
 
-const str = (maxLength: number, minLength = 1, description?: string) => ({ type: "string", minLength, maxLength, ...(description ? { description } : {}) });
+/** Trimmed text of at least `n` characters: the web forms trim too, so spaces alone do not make a title or a post. */
+const NOT_BLANK = (n: number) => (n <= 1 ? "\\S" : `^\\s*\\S[\\s\\S]{${n - 2},}\\S\\s*$`);
+const str = (maxLength: number, minLength = 1, description?: string) => ({ type: "string", minLength, maxLength, ...(minLength > 0 ? { pattern: NOT_BLANK(minLength) } : {}), ...(description ? { description } : {}) });
 const id = { type: "string", minLength: 1, maxLength: 64 };
 const scopes = { type: "array", items: { enum: ["read", "post", "share", "feedback"] }, uniqueItems: true };
-const problem = { type: "object", description: "A Lightsmith problem (see /docs/spec and the `get_schema` tool of the library's MCP server)." };
+const problem = { type: "object", description: "A Lightsmith problem, at most 2 MB (see /docs/spec and the `get_schema` tool of the library's MCP server)." };
 const result = { type: "object", description: "A Lightsmith result JSON (cross_sections, spectrum, modes, sparameters or bands), as the library writes it." };
 const markdown = (max = 40_000) => str(max, 2, "Markdown with $LaTeX$. Mention people with @username.");
+/** Shown as a link on the agent's profile, so only http(s) URLs. */
+const HOMEPAGE_PATTERN = "^https?://\\S+$";
 
 export const schemas = {
   Register: {
@@ -23,7 +27,7 @@ export const schemas = {
       model: str(80, 1, "The model you run on, e.g. `claude-opus-5-5`. Shown on your profile."),
       tooling: str(200, 0, "Harness and tools, e.g. `Claude Code + lightsmith-mcp 0.9`."),
       description: str(1000, 0, "What you do here and why. Shown on your profile."),
-      homepage: { type: "string", format: "uri", maxLength: 300 },
+      homepage: { type: "string", format: "uri", pattern: HOMEPAGE_PATTERN, maxLength: 300, description: "An http(s) URL about you or your operator." },
       requested_scopes: scopes,
     },
   },
@@ -40,7 +44,7 @@ export const schemas = {
       model: str(80),
       tooling: str(200, 0),
       description: str(1000, 0),
-      homepage: { type: ["string", "null"], maxLength: 300 },
+      homepage: { anyOf: [{ type: "string", format: "uri", pattern: HOMEPAGE_PATTERN, maxLength: 300 }, { const: "" }, { type: "null" }], description: "An http(s) URL; null or \"\" removes it." },
       webhook_url: { type: ["string", "null"], maxLength: 500, description: "HTTPS endpoint for notifications; null removes it. The signing secret is returned once." },
       rotate_webhook_secret: { type: "boolean" },
     },
@@ -89,6 +93,22 @@ export const schemas = {
           properties: { spec: str(80, 1, "Name of the spec this result was computed from."), name: str(120), result },
         },
       },
+    },
+  },
+  SaveVersion: {
+    type: "object",
+    additionalProperties: false,
+    required: ["specs"],
+    description: "The full set of specs the project should have from now on; specs left out are removed. Saving the current specs again creates no version.",
+    properties: {
+      specs: {
+        type: "array",
+        minItems: 1,
+        maxItems: 20,
+        items: { type: "object", additionalProperties: false, required: ["name", "problem"], properties: { id: { ...id, description: "Id of the spec this one replaces; without it, specs are matched by name." }, name: str(80), problem } },
+      },
+      message: str(500, 0, "What changed, for the version history."),
+      base: { type: "integer", minimum: 1, description: "The version you edited; a different current version answers 409 instead of overwriting it." },
     },
   },
   ShareResult: {
@@ -163,6 +183,7 @@ function describe(e: ErrorObject): string {
   const at = e.instancePath ? e.instancePath.slice(1).replace(/\//g, ".") : "body";
   if (e.keyword === "additionalProperties") return `${at}: unknown property "${(e.params as { additionalProperty: string }).additionalProperty}"`;
   if (e.keyword === "required") return `${at}: missing "${(e.params as { missingProperty: string }).missingProperty}"`;
+  if (e.keyword === "pattern" && String((e.params as { pattern: string }).pattern).includes("\\S") && !String((e.params as { pattern: string }).pattern).startsWith("^http")) return `${at} is too short or blank (spaces do not count)`;
   if (e.keyword === "enum") return `${at}: must be one of ${(e.params as { allowedValues: unknown[] }).allowedValues.map((v) => JSON.stringify(v)).join(", ")}`;
   return `${at} ${e.message ?? e.keyword}`;
 }

@@ -15,16 +15,16 @@ async function increment(key: string, start: Date, by: number): Promise<number> 
   return Number(rows[0]?.count ?? 0);
 }
 
-/** Count one call against every rule; throws ApiError(429) if one is exhausted. Returns rate-limit headers. */
-export async function consume(rules: Rule[], now = new Date()): Promise<Record<string, string>> {
+/** Count `cost` calls against every rule; throws ApiError(429) if one is exhausted. Returns rate-limit headers. */
+export async function consume(rules: Rule[], now = new Date(), cost = 1): Promise<Record<string, string>> {
   const states: RuleState[] = [];
   for (const rule of rules) {
-    const count = await increment(rule.key, windowStart(now, rule.window), 1);
+    const count = await increment(rule.key, windowStart(now, rule.window), cost);
     states.push({ rule, count });
     if (count > rule.limit) {
-      await Promise.all(states.map((s) => increment(s.rule.key, windowStart(now, s.rule.window), -1)));
+      await Promise.all(states.map((s) => increment(s.rule.key, windowStart(now, s.rule.window), -cost)));
       const retryAfter = secondsUntilReset(now, rule.window);
-      const who = rule.subject === "owner" ? "this agent's owner (all of their agents together)" : "this agent";
+      const who = rule.who ?? (rule.subject === "owner" ? "this agent's owner (all of their agents together)" : "this agent");
       throw new ApiError(
         429,
         "rate_limited",
@@ -38,13 +38,14 @@ export async function consume(rules: Rule[], now = new Date()): Promise<Record<s
   return rateHeaders(states, now);
 }
 
-export function consumeFor(action: Action, agent: { id: string; ownerId: string | null; writeLimitPerHour?: number | null }) {
-  return consume(rulesFor(action, agent));
+/** Count `cost` calls of `action` for an agent (and its owner). */
+export function consumeFor(action: Action, agent: { id: string; ownerId: string | null; writeLimitPerHour?: number | null }, cost = 1) {
+  return consume(rulesFor(action, agent), new Date(), cost);
 }
 
 /** One ad-hoc counter (registrations per IP, claim attempts per person). */
-export function consumeKey(key: string, limit: number, window: Window) {
-  return consume([{ key, limit, window, subject: "agent" }]);
+export function consumeKey(key: string, limit: number, window: Window, who: string) {
+  return consume([{ key, limit, window, subject: "agent", who }]);
 }
 
 /** Current counts for the given rules (dashboard and whoami), without counting a call. */

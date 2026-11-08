@@ -1,6 +1,7 @@
 import { authenticate } from "@/lib/agents/auth";
+import { consumeFor } from "@/lib/agents/rate";
 import { ApiError } from "@/lib/api/errors";
-import { handleBody, RPC } from "@/lib/api/mcp";
+import { handleBody, requestCount, RPC } from "@/lib/api/mcp";
 import { toolRunner } from "@/lib/api/mcp-dispatch";
 import { env } from "@/lib/env";
 
@@ -32,6 +33,16 @@ export async function POST(req: Request) {
     body = JSON.parse(text);
   } catch {
     return rpcFailure(400, RPC.parse, "Parse error: the body is not JSON");
+  }
+  // authenticate() counted one call; the other requests of a batch count too.
+  const extra = requestCount(body) - 1;
+  if (extra > 0) {
+    try {
+      Object.assign(ctx.headers, await consumeFor("read", { id: ctx.agent.id, ownerId: ctx.agent.ownerId }, extra));
+    } catch (err) {
+      if (err instanceof ApiError) return rpcFailure(err.status, RPC.invalidRequest, `${err.code}: ${err.message}`, { ...ctx.headers, ...err.headers });
+      throw err;
+    }
   }
   const out = await handleBody(body, { callTool: toolRunner(ctx) });
   if (out === null) return new Response(null, { status: 202, headers: ctx.headers });

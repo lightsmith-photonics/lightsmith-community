@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/api/errors";
 import { schemas, validateBody } from "@/lib/api/schemas";
 import { openApiDocument } from "@/lib/api/openapi";
-import { handleBody, handleMessage, LATEST_PROTOCOL_VERSION, RPC, SERVER_INSTRUCTIONS } from "@/lib/api/mcp";
+import { clientIp } from "@/lib/api/http";
+import { handleBody, handleMessage, LATEST_PROTOCOL_VERSION, requestCount, RPC, SERVER_INSTRUCTIONS } from "@/lib/api/mcp";
 import { TOOLS, listedTools } from "@/lib/api/mcp-tools";
 import { agentsMd, llmsTxt } from "@/lib/agent-docs";
 
@@ -30,11 +31,60 @@ describe("request schemas", () => {
     expect(err(() => validateBody("Reply", { body: "o" })).status).toBe(400);
   });
 
+  it("refuse titles and posts made of spaces, as the web forms do", () => {
+    const thread = { category: "help", title: "A long enough title", body: "A body." };
+    expect(() => validateBody("CreateThread", thread)).not.toThrow();
+    expect(() => validateBody("CreateThread", { ...thread, title: "          " })).toThrow(/blank/);
+    expect(() => validateBody("CreateThread", { ...thread, title: "   short   " })).toThrow(/blank/);
+    expect(() => validateBody("CreateThread", { ...thread, body: "     " })).toThrow(/blank/);
+    expect(() => validateBody("Reply", { body: " \n\t " })).toThrow(/blank/);
+    expect(() => validateBody("RespondToFeedback", { kind: "comment", body: "    " })).toThrow(/blank/);
+    expect(() => validateBody("Register", { username: "film-checker", display_name: "   ", model: "m" })).toThrow(/blank/);
+    expect(() => validateBody("Reply", { body: "  ok  " })).not.toThrow();
+    expect(() => validateBody("UpdateMe", { tooling: "" })).not.toThrow(); // optional text may be empty
+  });
+
   it("accept measured data as CSV text or JSON", () => {
     const base = { kind: "experiment", body: "Measured on our ellipsometer.", outcome: "agrees" };
     expect(() => validateBody("RespondToFeedback", { ...base, measurement: { quantity: "reflectance", data: "wavelength_nm,R\n400,0.1" } })).not.toThrow();
     expect(() => validateBody("RespondToFeedback", { ...base, measurement: { quantity: "reflectance", data: { x: [1], series: [] }, sample: { thickness_nm: 100 } } })).not.toThrow();
     expect(() => validateBody("RespondToFeedback", { ...base, measurement: { quantity: "reflectance", data: 5 } })).toThrow(ApiError);
+  });
+});
+
+describe("agent homepages", () => {
+  const base = { username: "film-checker", display_name: "Film checker", model: "m" };
+
+  it("must be http(s) URLs, because profiles link them", () => {
+    for (const bad of ["javascript:alert(1)", "data:text/html,x", "/settings/agents", "ftp://example.org/x", "https://exa mple.org"]) {
+      expect(() => validateBody("Register", { ...base, homepage: bad }), bad).toThrow(ApiError);
+      expect(() => validateBody("UpdateMe", { homepage: bad }), bad).toThrow(ApiError);
+    }
+    expect(() => validateBody("Register", { ...base, homepage: "https://example.org/agent" })).not.toThrow();
+    expect(() => validateBody("UpdateMe", { homepage: "http://example.org" })).not.toThrow();
+  });
+
+  it("can be removed with null or an empty string", () => {
+    expect(() => validateBody("UpdateMe", { homepage: null })).not.toThrow();
+    expect(() => validateBody("UpdateMe", { homepage: "" })).not.toThrow();
+  });
+});
+
+describe("client address for per-IP limits", () => {
+  const req = (xff?: string, realIp?: string) => new Request("http://x/", { headers: { ...(xff ? { "x-forwarded-for": xff } : {}), ...(realIp ? { "x-real-ip": realIp } : {}) } });
+
+  it("ignores what the client put in X-Forwarded-For", () => {
+    // a client sends a forged header; nginx appends the address it saw
+    expect(clientIp(req("6.6.6.6, 198.51.100.7"), 1)).toBe("198.51.100.7");
+    expect(clientIp(req("6.6.6.6, 7.7.7.7, 198.51.100.7"), 1)).toBe("198.51.100.7");
+    // Cloudflare appends the client, nginx appends Cloudflare
+    expect(clientIp(req("6.6.6.6, 198.51.100.7, 172.70.1.1"), 2)).toBe("198.51.100.7");
+  });
+
+  it("copes with short chains and no proxy", () => {
+    expect(clientIp(req("198.51.100.7"), 2)).toBe("198.51.100.7");
+    expect(clientIp(req(undefined, "198.51.100.8"), 1)).toBe("198.51.100.8");
+    expect(clientIp(req(), 1)).toBe("local");
   });
 });
 
@@ -93,6 +143,16 @@ describe("MCP protocol", () => {
     expect(await handleMessage({ jsonrpc: "2.0", id: 9, method: "ping" }, deps)).toEqual({ jsonrpc: "2.0", id: 9, result: {} });
   });
 
+  it("counts every request of a batch as a call", () => {
+    const ping = (id: unknown) => ({ jsonrpc: "2.0", id, method: "ping" });
+    expect(requestCount(ping(1))).toBe(1);
+    expect(requestCount([ping(1), ping("two"), { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "whoami" } }])).toBe(3);
+    expect(requestCount([{ jsonrpc: "2.0", method: "notifications/initialized" }, ping(1)])).toBe(1);
+    expect(requestCount([{ jsonrpc: "2.0", id: 1, result: {} }])).toBe(0); // a client's response, not a call
+    expect(requestCount("nonsense")).toBe(0);
+    expect(requestCount([])).toBe(0);
+  });
+
   it("answers batches and drops notifications", async () => {
     const out = await handleBody([{ jsonrpc: "2.0", method: "notifications/initialized" }, { jsonrpc: "2.0", id: 1, method: "ping" }], deps);
     expect(out).toEqual([{ jsonrpc: "2.0", id: 1, result: {} }]);
@@ -133,6 +193,13 @@ describe("OpenAPI document", () => {
     expect(doc.paths["/agents/register"].post.security).toEqual([]);
     expect(doc.paths["/threads"].post["x-required-scope"]).toBe("post");
     expect(doc.paths["/feedback"].post["x-required-scope"]).toBe("feedback");
+  });
+
+  it("documents the limits the handlers apply", () => {
+    const limitOf = (params: unknown) => (params as { name: string; schema: { maximum?: number } }[]).find((p) => p.name === "limit")?.schema.maximum;
+    expect(limitOf(doc.paths["/threads"].get.parameters)).toBe(50);
+    expect(limitOf(doc.paths["/feedback"].get.parameters)).toBe(50);
+    expect(limitOf(doc.paths["/notifications"].get.parameters)).toBe(100);
   });
 });
 

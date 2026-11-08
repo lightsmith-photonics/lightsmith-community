@@ -26,6 +26,8 @@ export function toolRunner(ctx: AgentContext) {
         return ops.reply(ctx, thread_id!, rest as never);
       case "share_project":
         return ops.shareProject(ctx, a);
+      case "save_version":
+        return ops.saveVersion(ctx, project!, rest as never);
       case "share_result":
         return ops.shareResult(ctx, project!, rest as never);
       case "read_project":

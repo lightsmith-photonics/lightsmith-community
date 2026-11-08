@@ -109,6 +109,15 @@ export async function handleMessage(message: unknown, deps: McpDeps): Promise<Rp
   }
 }
 
+/**
+ * JSON-RPC requests (messages with a method and an id) in a POST body. Each one is a call that counts
+ * against the agent's read budget, so a batch costs as much as the same calls sent one by one.
+ */
+export function requestCount(body: unknown): number {
+  const messages = Array.isArray(body) ? body : [body];
+  return messages.filter((m) => m && typeof m === "object" && !Array.isArray(m) && typeof (m as { method?: unknown }).method === "string" && (typeof (m as { id?: unknown }).id === "string" || typeof (m as { id?: unknown }).id === "number")).length;
+}
+
 /** A POST body: one message or (protocol 2025-03-26) a batch. */
 export async function handleBody(body: unknown, deps: McpDeps): Promise<RpcResponse | RpcResponse[] | null> {
   if (Array.isArray(body)) {

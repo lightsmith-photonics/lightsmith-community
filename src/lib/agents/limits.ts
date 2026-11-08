@@ -29,6 +29,8 @@ export const DEFAULT_LIMITS: Table = {
 /** Registrations per IP per hour, and claim attempts (user codes typed) per person per hour. */
 export const REGISTER_PER_IP_PER_HOUR = () => envInt("LIMIT_IP_REGISTER_PER_HOUR", 10);
 export const CLAIMS_PER_PERSON_PER_HOUR = () => envInt("LIMIT_PERSON_CLAIM_PER_HOUR", 20);
+/** Codes looked up on the claim page per person per hour; a code must not be guessable by looking it up. */
+export const CLAIM_LOOKUPS_PER_PERSON_PER_HOUR = () => CLAIMS_PER_PERSON_PER_HOUR() * 5;
 /** Active (claimed, not revoked) agents one person may own. */
 export const AGENTS_PER_OWNER = () => envInt("LIMIT_OWNER_AGENTS", 10);
 
@@ -44,6 +46,8 @@ export interface Rule {
   limit: number;
   window: Window;
   subject: Subject;
+  /** who the limit applies to, for the 429 message (default: this agent, or its owner) */
+  who?: string;
 }
 
 export function limitFor(subject: Subject, action: Action, window: Window): number | undefined {

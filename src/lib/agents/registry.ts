@@ -4,7 +4,7 @@ import { ApiError } from "../api/errors";
 import { linkEmail, sendMail } from "../mail";
 import { notify } from "../notify";
 import { USERNAME_RE } from "../slug";
-import { AGENTS_PER_OWNER, CLAIMS_PER_PERSON_PER_HOUR, REGISTER_PER_IP_PER_HOUR } from "./limits";
+import { AGENTS_PER_OWNER, CLAIM_LOOKUPS_PER_PERSON_PER_HOUR, CLAIMS_PER_PERSON_PER_HOUR, REGISTER_PER_IP_PER_HOUR } from "./limits";
 import { consumeKey } from "./rate";
 import { formatScopes, hashSecret, looksLikeDeviceCode, newDeviceCode, newLinkSecret, newToken, newUserCode, normaliseUserCode, parseScopes, type Scope } from "./tokens";
 
@@ -44,7 +44,7 @@ export async function purgeExpiredRegistrations() {
 }
 
 export async function register(input: Registration, ip: string) {
-  await consumeKey(`ip:${ip}:register:hour`, REGISTER_PER_IP_PER_HOUR(), "hour");
+  await consumeKey(`ip:${ip}:register:hour`, REGISTER_PER_IP_PER_HOUR(), "hour", "this address");
   const username = input.username.trim().toLowerCase();
   if (!USERNAME_RE.test(username)) throw new ApiError(400, "invalid_username", "username: 3–30 characters, lower-case letters, digits, '-' and '_', starting with a letter or digit.");
   if (RESERVED.has(username)) throw new ApiError(400, "invalid_username", `"${username}" is reserved. Pick another username.`);
@@ -133,13 +133,22 @@ export async function findClaimable(rawCode: string) {
   return { ...p, userCode: code };
 }
 
+/**
+ * The claim page's lookup of a code. It is counted before the lookup, whether or not the code exists,
+ * so user codes cannot be guessed through this page (RFC 8628 section 5.1) with the claim limit untouched.
+ */
+export async function lookupClaimable(humanId: string, rawCode: string) {
+  await consumeKey(`person:${humanId}:claim-lookup:hour`, CLAIM_LOOKUPS_PER_PERSON_PER_HOUR(), "hour", "your account");
+  return findClaimable(rawCode);
+}
+
 type Human = { id: string; email: string | null; username: string | null; kind?: string };
 
 /** Step 2: a signed-in human claims an agent; a confirmation link goes to their email. */
 export async function startClaim(human: Human, rawCode: string, scopes: Scope[]) {
   if (human.kind === "agent") throw new ApiError(403, "forbidden", "Agents cannot claim agents.");
   if (!human.email) throw new ApiError(400, "no_email", "Your account has no email address. Sign in with email to claim an agent.");
-  await consumeKey(`person:${human.id}:claim:hour`, CLAIMS_PER_PERSON_PER_HOUR(), "hour");
+  await consumeKey(`person:${human.id}:claim:hour`, CLAIMS_PER_PERSON_PER_HOUR(), "hour", "your account");
   const agent = await findClaimable(rawCode);
   if (!agent) throw new ApiError(404, "not_found", "No agent is waiting for that code. Codes expire after 30 minutes; ask the agent to register again.");
   const owned = await db.agentProfile.count({ where: { ownerId: human.id, status: { not: "revoked" } } });

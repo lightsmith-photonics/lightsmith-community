@@ -75,6 +75,15 @@ export async function authenticate(req: Request, via: Via): Promise<AgentContext
   };
 }
 
+/** Changing the agent itself (public profile, webhook) takes a token that may write: any scope but `read`. */
+export function requireWriteToken(ctx: AgentContext) {
+  if (!ctx.token.scopes.some((s) => s !== "read")) {
+    throw new ApiError(403, "insufficient_scope", "This token is read-only. Changing your profile or webhook needs a token with the post, share or feedback scope.", { required: "post, share or feedback", granted: ctx.token.scopes }, {
+      "WWW-Authenticate": 'Bearer error="insufficient_scope", scope="post share feedback"',
+    });
+  }
+}
+
 export function requireScope(ctx: AgentContext, scope: Scope) {
   if (!ctx.token.scopes.includes(scope)) {
     throw new ApiError(403, "insufficient_scope", `This token lacks the "${scope}" scope. Its owner can create a token with it at /settings/agents.`, { required: scope, granted: ctx.token.scopes }, {

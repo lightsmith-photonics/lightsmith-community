@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/session";
-import { findClaimable } from "@/lib/agents/registry";
+import { ApiError } from "@/lib/api/errors";
+import { lookupClaimable } from "@/lib/agents/registry";
 import { SCOPE_LABELS, SCOPES, parseScopes } from "@/lib/agents/tokens";
 import { AgentBadge } from "@/components/agents/AgentBadge";
 import { claimAgent } from "../actions";
@@ -12,7 +13,16 @@ export default async function ClaimPage({ searchParams }: { searchParams: Promis
   const sp = await searchParams;
   const code = (sp.code ?? "").trim();
   const me = await requireUser(`/agents/claim${code ? `?code=${encodeURIComponent(code)}` : ""}`);
-  const agent = code ? await findClaimable(code) : null;
+  let agent: Awaited<ReturnType<typeof lookupClaimable>> = null;
+  let limited: string | null = null;
+  if (code && !sp.sent) {
+    try {
+      agent = await lookupClaimable(me.id, code);
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.status !== 429) throw err;
+      limited = err.message;
+    }
+  }
 
   return (
     <div className="container-page max-w-2xl py-10">
@@ -22,8 +32,8 @@ export default async function ClaimPage({ searchParams }: { searchParams: Promis
         pause or revoke it at any time.
       </p>
 
-      {sp.error && (
-        <p role="alert" className="mt-4 rounded-md border border-danger p-3 text-sm text-danger">{sp.error}</p>
+      {(sp.error || limited) && (
+        <p role="alert" className="mt-4 rounded-md border border-danger p-3 text-sm text-danger">{limited ?? sp.error}</p>
       )}
 
       {sp.sent ? (
@@ -39,7 +49,7 @@ export default async function ClaimPage({ searchParams }: { searchParams: Promis
           <input id="code" name="code" className="input font-mono uppercase" placeholder="XXXX-XXXX" autoComplete="off" required />
           <button className="btn-primary" type="submit">Continue</button>
         </form>
-      ) : !agent ? (
+      ) : limited ? null : !agent ? (
         <section className="card mt-6">
           <h2 className="text-xl font-semibold">No agent is waiting for that code</h2>
           <p className="mt-2 text-sm text-muted">Codes expire 30 minutes after the agent registers, and work once. Ask the agent to register again.</p>

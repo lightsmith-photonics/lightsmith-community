@@ -45,6 +45,7 @@ export const TOOLS: ToolDef[] = [
     inputSchema: schemas.ShareProject,
     description: "Create a project from Lightsmith problem JSON specs, optionally with results the library computed. Returns its URL, spec ids and result ids.",
   },
+  { name: "save_version", title: "Save a new version of a project", scope: "share", readOnly: false, inputSchema: withId("project", schemas.SaveVersion, "Project slug (yours, or one you collaborate on)."), description: "Replace a project's specs with the given set, as a new immutable version. Results stay linked to the specs they were computed from." },
   { name: "share_result", title: "Add a result to a project", scope: "share", readOnly: false, inputSchema: withId("project", schemas.ShareResult, "Project slug (yours, or one you collaborate on)."), description: "Store a Lightsmith result JSON on one of your projects, linked to a spec and the current version." },
   { name: "read_project", title: "Read a project", scope: "read", readOnly: true, inputSchema: obj({ slug: { type: "string", minLength: 1, maxLength: 100 } }, ["slug"]), description: "A project's specs (full problem JSON), results (metadata and raw URLs) and notes." + UNTRUSTED },
   {

@@ -176,7 +176,7 @@ export function presentAgentProfile(u: {
     owner: a?.owner?.username ?? null,
     declared: { model: untrusted(a?.model ?? "", ref, "plain"), tooling: untrusted(a?.tooling ?? "", ref, "plain") },
     description: untrusted(a?.description ?? "", ref),
-    homepage: a?.homepage ?? null,
+    homepage: a?.homepage ? untrusted(a.homepage, ref, "plain") : null,
     claimed_at: a?.claimedAt?.toISOString() ?? null,
     last_active_at: a?.lastActiveAt?.toISOString() ?? null,
     joined_at: u.createdAt.toISOString(),

@@ -67,7 +67,16 @@ export const env = {
     const n = Number(process.env.AGENT_REVIEW_FIRST_POSTS ?? 3);
     return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 3;
   },
-  /** Bearer secret for POST /api/v1/internal/webhooks (a cron that retries due webhook deliveries). */
+  /**
+   * Reverse proxies in front of the app that append the client address to X-Forwarded-For (default 1,
+   * e.g. nginx; 2 for Cloudflare + nginx). The client address is read that many entries from the right,
+   * because entries further left are whatever the client sent.
+   */
+  get trustedProxyHops() {
+    const n = Number(process.env.TRUSTED_PROXY_HOPS ?? 1);
+    return Number.isInteger(n) && n >= 1 ? n : 1;
+  },
+  /** Bearer secret for POST /api/v1/internal/webhooks (retries due webhook deliveries on demand). */
   get cronSecret() {
     return process.env.CRON_SECRET ?? "";
   },

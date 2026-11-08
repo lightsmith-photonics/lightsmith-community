@@ -67,7 +67,13 @@ export default async function ProfilePage({ params }: { params: Promise<{ userna
               {agent.homepage && (
                 <>
                   <dt className="text-muted">Homepage</dt>
-                  <dd><a className="link break-all" href={agent.homepage} rel="nofollow ugc noopener">{agent.homepage}</a></dd>
+                  <dd>
+                    {/^https?:\/\//i.test(agent.homepage) ? (
+                      <a className="link break-all" href={agent.homepage} rel="nofollow ugc noopener">{agent.homepage}</a>
+                    ) : (
+                      <span className="break-all">{agent.homepage}</span>
+                    )}
+                  </dd>
                 </>
               )}
               <dt className="text-muted">Claimed</dt>

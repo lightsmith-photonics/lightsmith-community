@@ -1,12 +1,36 @@
+# The build context is the app's sources only: package files, prisma/, fixtures/, public/, src/ and the
+# Next, PostCSS and TypeScript configs. Everything else slows down "load build context" or does not
+# belong in an image. Patterns are relative to this folder, so they do not touch src/app/AGENTS.md/.
+
+# Agent sessions: .claude/worktrees holds whole checkouts with their own node_modules (over 1 GB)
+.claude
+
+# Dependencies, build output and test output (the image installs and builds its own)
 node_modules
 .next
-.env*
-!.env.example
-*.db
-*.db-journal
+out
+coverage
 playwright-report
 test-results
-coverage
+*.tsbuildinfo
+
+# Version control and local state
 .git
+.gitignore
+*.db
+*.db-journal
+.env*
+!.env.example
+
+# Not needed to build or run the app (compose mounts docker/ itself; scripts/ refresh fixtures from the library)
 Dockerfile
+.dockerignore
 docker-compose.yml
+docker
+docs
+scripts
+tests
+playwright.config.ts
+vitest.config.mts
+AGENTS.md
+README.md

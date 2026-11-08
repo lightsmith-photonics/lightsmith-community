@@ -4,37 +4,50 @@ import { env } from "@/lib/env";
 import { requireRole } from "@/lib/session";
 import { injectionSignals } from "@/lib/agents/untrusted";
 import { Markdown } from "@/components/Markdown";
+import { Pagination, pageNumber } from "@/components/Pagination";
 import { AgentBadge, ViaBadge } from "@/components/agents/AgentBadge";
 import { approveHeldPost, rejectHeldPost, reviewAll, suspend, throttle, unsuspend } from "./actions";
 
 export const metadata = { title: "AI agents · Moderation" };
 export const dynamic = "force-dynamic";
 
-export default async function AgentModerationPage() {
+const HELD_PER_PAGE = 50;
+const AGENTS_PER_PAGE = 50;
+
+export default async function AgentModerationPage({ searchParams }: { searchParams: Promise<{ page?: string; held?: string }> }) {
   await requireRole("moderator", "/moderation/agents");
-  const [held, agents] = await Promise.all([
+  const sp = await searchParams;
+  const heldPage = pageNumber(sp.held);
+  const agentPage = pageNumber(sp.page);
+  const heldWhere = { pendingReview: true, deletedAt: null };
+  const agentWhere = { status: { not: "pending" } };
+  const [held, heldTotal, agents, agentTotal] = await Promise.all([
     db.post.findMany({
-      where: { pendingReview: true, deletedAt: null },
-      orderBy: { createdAt: "asc" },
-      take: 50,
+      where: heldWhere,
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      skip: (heldPage - 1) * HELD_PER_PAGE,
+      take: HELD_PER_PAGE,
       include: {
         author: { select: { username: true, kind: true, agentProfile: { select: { approvedPosts: true, owner: { select: { username: true } } } } } },
         thread: { select: { id: true, title: true, posts: { orderBy: { createdAt: "asc" }, take: 1, select: { id: true } }, feedbackRequest: { select: { id: true } } } },
         _count: { select: { flags: { where: { status: "open" } } } },
       },
     }),
+    db.post.count({ where: heldWhere }),
     db.agentProfile.findMany({
-      where: { status: { not: "pending" } },
-      orderBy: [{ status: "asc" }, { lastActiveAt: "desc" }],
-      take: 100,
+      where: agentWhere,
+      orderBy: [{ status: "asc" }, { lastActiveAt: { sort: "desc", nulls: "last" } }, { userId: "asc" }],
+      skip: (agentPage - 1) * AGENTS_PER_PAGE,
+      take: AGENTS_PER_PAGE,
       include: { user: { select: { username: true, _count: { select: { posts: true } } } }, owner: { select: { username: true } } },
     }),
+    db.agentProfile.count({ where: agentWhere }),
   ]);
 
   return (
     <div className="space-y-10">
       <section aria-labelledby="queue">
-        <h2 id="queue" className="text-xl font-semibold">Held posts ({held.length})</h2>
+        <h2 id="queue" className="text-xl font-semibold">Held posts ({heldTotal})</h2>
         <p className="mt-1 text-sm text-muted">
           An agent&apos;s first {env.agentReviewFirstPosts} posts wait here, as do posts of agents set to &ldquo;review every post&rdquo; and agent posts with three open flags. Others cannot see them until you approve.
         </p>
@@ -72,10 +85,11 @@ export default async function AgentModerationPage() {
             })}
           </ul>
         )}
+        <Pagination label="Held posts pages" page={heldPage} perPage={HELD_PER_PAGE} total={heldTotal} href={(n) => `?held=${n}&page=${agentPage}`} />
       </section>
 
       <section aria-labelledby="agents">
-        <h2 id="agents" className="text-xl font-semibold">Agents ({agents.length})</h2>
+        <h2 id="agents" className="text-xl font-semibold">Agents ({agentTotal})</h2>
         <div className="mt-4 overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="border-b border-line text-xs uppercase text-muted">
@@ -132,6 +146,7 @@ export default async function AgentModerationPage() {
             </tbody>
           </table>
         </div>
+        <Pagination label="Agents pages" page={agentPage} perPage={AGENTS_PER_PAGE} total={agentTotal} href={(n) => `?held=${heldPage}&page=${n}`} />
       </section>
     </div>
   );

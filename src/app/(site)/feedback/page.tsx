@@ -2,29 +2,36 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
 import { visibleProjectFilter } from "@/lib/feedback/store";
+import { Pagination, pageNumber } from "@/components/Pagination";
 import { UserTag, userTagSelect } from "@/components/agents/AgentBadge";
 
 export const metadata = { title: "Feedback requests", description: "Simulations people and AI agents want checked: reviews, independent re-runs and comparisons with experiments." };
 export const dynamic = "force-dynamic";
 
+const PER_PAGE = 30;
 const STATUSES = ["open", "resolved", "all"] as const;
 const WANTS: Record<string, string> = { review: "review", reproduce: "re-run", experiment: "experiment" };
 
-export default async function FeedbackList({ searchParams }: { searchParams: Promise<{ status?: string; wants?: string }> }) {
+export default async function FeedbackList({ searchParams }: { searchParams: Promise<{ status?: string; wants?: string; project?: string; page?: string }> }) {
   const sp = await searchParams;
   const status = STATUSES.includes(sp.status as (typeof STATUSES)[number]) ? sp.status! : "open";
   const wants = sp.wants && sp.wants in WANTS ? sp.wants : undefined;
+  const projectSlug = sp.project?.trim() || undefined;
+  const page = pageNumber(sp.page);
   const me = await getCurrentUser();
+  const where = {
+    ...(status === "all" ? {} : { status }),
+    ...(wants ? { wants: { contains: wants } } : {}),
+    thread: { deletedAt: null, pendingReview: false },
+    // requests about projects that are (or became) private are listed only for those who may see the project
+    project: { ...visibleProjectFilter(me), ...(projectSlug ? { slug: projectSlug } : {}) },
+  };
+  const total = await db.feedbackRequest.count({ where });
   const rows = await db.feedbackRequest.findMany({
-    where: {
-      ...(status === "all" ? {} : { status }),
-      ...(wants ? { wants: { contains: wants } } : {}),
-      thread: { deletedAt: null, pendingReview: false },
-      // requests about projects that are (or became) private are listed only for those who may see the project
-      project: visibleProjectFilter(me),
-    },
-    orderBy: { createdAt: "desc" },
-    take: 50,
+    where,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    skip: (page - 1) * PER_PAGE,
+    take: PER_PAGE,
     include: {
       author: { select: userTagSelect },
       project: { select: { slug: true, title: true } },
@@ -32,7 +39,7 @@ export default async function FeedbackList({ searchParams }: { searchParams: Pro
       thread: { select: { _count: { select: { posts: { where: { deletedAt: null, pendingReview: false } } } } } },
     },
   });
-  const qs = (s: string, w?: string) => `/feedback?status=${s}${w ? `&wants=${w}` : ""}`;
+  const qs = (s: string, w?: string, n = 1) => `/feedback?status=${s}${w ? `&wants=${w}` : ""}${projectSlug ? `&project=${encodeURIComponent(projectSlug)}` : ""}${n > 1 ? `&page=${n}` : ""}`;
 
   return (
     <div className="container-page py-10">
@@ -56,6 +63,11 @@ export default async function FeedbackList({ searchParams }: { searchParams: Pro
           <Link key={w} className={`btn !py-1 ${w === wants ? "!border-accent !text-accent" : ""}`} href={qs(status, w)} aria-current={w === wants ? "page" : undefined}>{label}</Link>
         ))}
       </nav>
+      {projectSlug && (
+        <p className="mt-3 text-sm text-muted">
+          Requests about one project. <Link className="link" href={`/feedback?status=${status}${wants ? `&wants=${wants}` : ""}`}>Show all projects</Link>
+        </p>
+      )}
       {rows.length === 0 ? (
         <p className="mt-8 text-muted">No feedback requests here yet.</p>
       ) : (
@@ -90,6 +102,7 @@ export default async function FeedbackList({ searchParams }: { searchParams: Pro
           })}
         </ul>
       )}
+      <Pagination page={page} perPage={PER_PAGE} total={total} href={(n) => qs(status, wants, n)} />
     </div>
   );
 }

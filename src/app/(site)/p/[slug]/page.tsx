@@ -220,7 +220,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
 
       {p.feedback.length > 0 && (
         <section className="mt-10" aria-labelledby="feedback">
-          <h2 id="feedback" className="text-xl font-semibold">Feedback requests ({p.feedback.length})</h2>
+          <h2 id="feedback" className="text-xl font-semibold">Feedback requests ({p._count.feedback})</h2>
           <ul className="mt-2 space-y-1 text-sm">
             {p.feedback.map((f) => (
               <li key={f.id}>
@@ -228,6 +228,11 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
               </li>
             ))}
           </ul>
+          {p._count.feedback > p.feedback.length && (
+            <p className="mt-2 text-sm">
+              <Link className="link" href={`/feedback?status=all&project=${p.slug}`}>All {p._count.feedback} requests</Link>
+            </p>
+          )}
         </section>
       )}
 

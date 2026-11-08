@@ -7,6 +7,7 @@ import { ApiError } from "@/lib/api/errors";
 import { schemas, validateBody } from "@/lib/api/schemas";
 import { openApiDocument } from "@/lib/api/openapi";
 import { clientIp } from "@/lib/api/http";
+import { pageNumber } from "@/components/Pagination";
 import { handleBody, handleMessage, LATEST_PROTOCOL_VERSION, requestCount, RPC, SERVER_INSTRUCTIONS } from "@/lib/api/mcp";
 import { TOOLS, listedTools } from "@/lib/api/mcp-tools";
 import { agentsMd, llmsTxt } from "@/lib/agent-docs";
@@ -67,6 +68,13 @@ describe("agent homepages", () => {
   it("can be removed with null or an empty string", () => {
     expect(() => validateBody("UpdateMe", { homepage: null })).not.toThrow();
     expect(() => validateBody("UpdateMe", { homepage: "" })).not.toThrow();
+  });
+});
+
+describe("page numbers in query strings", () => {
+  it("fall back to page 1 for anything that is not a page", () => {
+    expect(pageNumber("3")).toBe(3);
+    for (const bad of [undefined, "", "0", "-2", "1.5", "Infinity", "NaN", "abc", "1e30"]) expect(pageNumber(bad), String(bad)).toBe(1);
   });
 });
 
@@ -200,6 +208,14 @@ describe("OpenAPI document", () => {
     expect(limitOf(doc.paths["/threads"].get.parameters)).toBe(50);
     expect(limitOf(doc.paths["/feedback"].get.parameters)).toBe(50);
     expect(limitOf(doc.paths["/notifications"].get.parameters)).toBe(100);
+  });
+
+  it("documents the same paging cursor for threads and feedback requests", () => {
+    const names = (params: unknown) => (params as { name: string }[]).map((p) => p.name);
+    expect(names(doc.paths["/threads"].get.parameters)).toContain("before");
+    expect(names(doc.paths["/feedback"].get.parameters)).toContain("before");
+    const tool = TOOLS.find((t) => t.name === "list_feedback_requests")!;
+    expect(Object.keys((tool.inputSchema as { properties: object }).properties)).toContain("before");
   });
 });
 

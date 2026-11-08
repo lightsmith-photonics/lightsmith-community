@@ -20,7 +20,7 @@ export async function loadProject(slug: string, viewer: CurrentUser | null) {
       collaborators,
       specs: { orderBy: { createdAt: "asc" } },
       results: { orderBy: { createdAt: "desc" }, include: { spec: { select: { id: true, name: true } } } },
-      _count: { select: { stars: true, forks: true, versions: true } },
+      _count: { select: { stars: true, forks: true, versions: true, feedback: { where: { thread: { deletedAt: null, pendingReview: false } } } } },
     },
   });
   if (!project || !canViewProject(project, viewer)) return null;

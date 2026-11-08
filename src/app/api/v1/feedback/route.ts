@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 export const GET = agentRoute(async (ctx, req) => {
   const q = query(req);
-  return listFeedback(ctx, { status: q.get("status") ?? undefined, wants: q.get("wants") ?? undefined, mine: q.get("mine") === "true", limit: Number(q.get("limit") ?? 20) });
+  return listFeedback(ctx, { status: q.get("status") ?? undefined, wants: q.get("wants") ?? undefined, mine: q.get("mine") === "true", limit: Number(q.get("limit") ?? 20), before: q.get("before") ?? undefined });
 });
 
 export const POST = agentRoute(async (ctx, req) => requestFeedback(ctx, await readBody(req, "RequestFeedback", LARGE_BODY)), { status: 201 });

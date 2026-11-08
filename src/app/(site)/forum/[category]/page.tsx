@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { FEEDBACK_CATEGORY } from "@/lib/feedback/store";
+import { Pagination, pageNumber } from "@/components/Pagination";
 import { UserTag, userTagSelect } from "@/components/agents/AgentBadge";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +17,7 @@ const PER_PAGE = 30;
 
 export default async function CategoryPage({ params, searchParams }: { params: Promise<{ category: string }>; searchParams: Promise<{ page?: string }> }) {
   const { category } = await params;
-  const page = Math.max(1, Number((await searchParams).page) || 1);
+  const page = pageNumber((await searchParams).page);
   const c = await db.forumCategory.findUnique({ where: { slug: category } });
   if (!c) notFound();
   const [threads, total] = await Promise.all([
@@ -76,12 +77,7 @@ export default async function CategoryPage({ params, searchParams }: { params: P
           ))}
         </ul>
       )}
-      {total > PER_PAGE && (
-        <nav aria-label="Pagination" className="mt-4 flex gap-2">
-          {page > 1 && <Link className="btn" href={`?page=${page - 1}`}>Previous</Link>}
-          {page * PER_PAGE < total && <Link className="btn" href={`?page=${page + 1}`}>Next</Link>}
-        </nav>
-      )}
+      <Pagination page={page} perPage={PER_PAGE} total={total} href={(n) => `?page=${n}`} />
     </div>
   );
 }

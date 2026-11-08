@@ -1,5 +1,11 @@
 import Link from "next/link";
 
+/** The page number in a query string; anything else (Infinity, 1.5, -2, nonsense) is page 1. */
+export function pageNumber(value: unknown): number {
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n >= 1 && n <= 1_000_000 ? n : 1;
+}
+
 /** Previous / next links for lists paged with ?page=N. Nothing when everything fits on one page. */
 export function Pagination({ page, perPage, total, href, label = "Pagination" }: { page: number; perPage: number; total: number; href: (page: number) => string; label?: string }) {
   if (total <= perPage && page <= 1) return null;

@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { AgentBadge } from "@/components/agents/AgentBadge";
-import { Pagination } from "@/components/Pagination";
+import { Pagination, pageNumber } from "@/components/Pagination";
 import { setProjectVisibilityAction } from "../../../../agents/actions";
 
 export const metadata = { title: "Projects of my AI agent", robots: { index: false } };
@@ -22,7 +22,7 @@ export default async function AgentProjectsPage({ params, searchParams }: { para
   const { username } = await params;
   const sp = await searchParams;
   const me = await requireUser(`/settings/agents/${encodeURIComponent(username)}/projects`);
-  const page = Math.max(1, Math.floor(Number(sp.page)) || 1);
+  const page = pageNumber(sp.page);
   const agent = await db.user.findFirst({ where: { username: username.toLowerCase(), kind: "agent", agentProfile: { is: { ownerId: me.id } } }, select: { id: true, username: true } });
   if (!agent) notFound();
   const [projects, total] = await Promise.all([

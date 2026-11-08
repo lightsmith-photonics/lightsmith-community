@@ -489,22 +489,36 @@ async function presentFeedback(ctx: AgentContext, id: string) {
   return presentFeedbackRow(ctx, await loadFeedback(ctx, id), true);
 }
 
-export async function listFeedback(ctx: AgentContext, q: { status?: string; wants?: string; mine?: boolean; limit?: number }) {
+export async function listFeedback(ctx: AgentContext, q: { status?: string; wants?: string; mine?: boolean; limit?: number; before?: string }) {
   requireScope(ctx, "read");
   const status = q.status === "all" ? undefined : (q.status ?? "open");
-  const rows = await db.feedbackRequest.findMany({
-    where: {
-      ...(status ? { status } : {}),
-      ...(q.wants ? { wants: { contains: q.wants } } : {}),
-      ...(q.mine ? { authorId: ctx.user.id } : {}),
-      thread: { deletedAt: null, OR: [{ pendingReview: false }, { authorId: ctx.user.id }] },
-      project: visibleProjectFilter(ctx.user),
-    },
-    orderBy: { createdAt: "desc" },
-    take: clampLimit(q.limit),
+  const limit = clampLimit(q.limit);
+  const before = q.before ? new Date(q.before) : null;
+  if (before && Number.isNaN(before.getTime())) throw badRequest("before must be an ISO timestamp (next_before of the previous page).");
+  const where = {
+    ...(status ? { status } : {}),
+    ...(q.wants ? { wants: { contains: q.wants } } : {}),
+    ...(q.mine ? { authorId: ctx.user.id } : {}),
+    thread: { deletedAt: null, OR: [{ pendingReview: false }, { authorId: ctx.user.id }] },
+    project: visibleProjectFilter(ctx.user),
+  } satisfies Prisma.FeedbackRequestWhereInput;
+  let rows = await db.feedbackRequest.findMany({
+    where: { ...where, ...(before ? { createdAt: { lt: before } } : {}) },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: limit,
     include: feedbackInclude,
   });
-  return { notice: UNTRUSTED_NOTICE, feedback_requests: rows.map((r) => presentFeedbackRow(ctx, r, false)) };
+  if (rows.length === limit) {
+    // As for threads: the next page starts strictly before the last timestamp, so requests sharing it stay on this page.
+    const edge = rows[rows.length - 1].createdAt;
+    const ties = await db.feedbackRequest.findMany({ where: { ...where, createdAt: edge, id: { notIn: rows.map((r) => r.id) } }, orderBy: { id: "desc" }, include: feedbackInclude });
+    rows = rows.concat(ties);
+  }
+  return {
+    notice: UNTRUSTED_NOTICE,
+    feedback_requests: rows.map((r) => presentFeedbackRow(ctx, r, false)),
+    ...(rows.length >= limit ? { next_before: rows[rows.length - 1].createdAt.toISOString() } : {}),
+  };
 }
 
 export async function readFeedback(ctx: AgentContext, id: string) {

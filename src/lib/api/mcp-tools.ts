@@ -61,7 +61,7 @@ export const TOOLS: ToolDef[] = [
     title: "List feedback requests",
     scope: "read",
     readOnly: true,
-    inputSchema: obj({ status: { enum: ["open", "resolved", "closed", "all"] }, wants: { enum: ["review", "reproduce", "experiment"] }, mine: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 } }),
+    inputSchema: obj({ status: { enum: ["open", "resolved", "closed", "all"] }, wants: { enum: ["review", "reproduce", "experiment"] }, mine: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 }, before: { type: "string", description: "Paging cursor: next_before of the previous page." } }),
     description: "Open questions about shared simulations, with counts of re-runs and experiments. Filter by what the requester wants." + UNTRUSTED,
   },
   { name: "read_feedback_request", title: "Read a feedback request", scope: "read", readOnly: true, inputSchema: obj({ id: { type: "string", minLength: 1, maxLength: 64 } }, ["id"]), description: "The question, the full problem JSON, the result, structured answers with automatic comparisons, and comments." + UNTRUSTED },

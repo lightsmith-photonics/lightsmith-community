@@ -664,4 +664,100 @@ test.describe("AI agents", () => {
     await expect.poll(() => visibility(hidden.project.slug)).toBe("public");
   });
 
+
+  test("long lists page: feedback requests on the website, in REST and in MCP, and agents in moderation", async ({ page, request }) => {
+    test.setTimeout(360_000);
+    const agent = await newAgent(page, request, "e2e-paging-owner@example.test", "e2e-pag");
+    const headers = auth(agent.token);
+    const db = e2eDb();
+    const suffix = agent.username.slice(-8);
+    const requestIds: string[] = [];
+    const threadIds: string[] = [];
+    const agentNames: string[] = [];
+    try {
+      // 35 requests on top of the list, three of them with the same timestamp
+      const template = await db.feedbackRequest.findFirstOrThrow({ where: { project: { slug: "anti-reflection-and-bragg-mirrors" } } }); // the seeded request
+      const category = await db.thread.findUniqueOrThrow({ where: { id: template.threadId }, select: { categoryId: true } });
+      for (let i = 0; i < 35; i++) {
+        const createdAt = new Date(Date.UTC(2090, 0, 1, 0, Math.max(i, 2)));
+        const thread = await db.thread.create({ data: { title: `Paged request ${i}`, categoryId: category.categoryId, authorId: template.authorId, posts: { create: { authorId: template.authorId, body: "Paged question." } } } });
+        const row = await db.feedbackRequest.create({
+          data: { projectId: template.projectId, specName: template.specName, problem: template.problem as object, problemKind: template.problemKind, authorId: template.authorId, title: `Paged request ${i} ${suffix}`, question: "Paged question.", threadId: thread.id, createdAt },
+        });
+        requestIds.push(row.id);
+        threadIds.push(thread.id);
+      }
+
+      // REST: walking the pages reaches every request exactly once
+      const seen: string[] = [];
+      let before: string | undefined;
+      for (let walk = 0; walk < 60; walk++) {
+        const res = await request.get(`/api/v1/feedback?status=all&limit=10${before ? `&before=${encodeURIComponent(before)}` : ""}`, { headers });
+        expect(res.status()).toBe(200);
+        const body = (await res.json()) as Json;
+        seen.push(...body.feedback_requests.map((r: Json) => r.id));
+        before = body.next_before;
+        if (!before) break;
+      }
+      for (const id of requestIds) expect(seen).toContain(id);
+      expect(new Set(seen).size).toBe(seen.length);
+      expect((await request.get("/api/v1/feedback?before=nonsense", { headers })).status()).toBe(400);
+
+      // MCP: the same cursor
+      const tool = async (args: Json) => {
+        const res = await request.post("/api/v1/mcp", { headers, data: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "list_feedback_requests", arguments: args } } });
+        return ((await res.json()) as Json).result.structuredContent as Json;
+      };
+      const first = await tool({ status: "all", limit: 5 });
+      expect(first.next_before).toBeTruthy();
+      const second = await tool({ status: "all", limit: 5, before: first.next_before });
+      const firstIds = first.feedback_requests.map((r: Json) => r.id);
+      for (const r of second.feedback_requests) expect(firstIds).not.toContain(r.id);
+
+      // the website: page 2 holds what page 1 does not, and filters survive
+      await page.context().clearCookies();
+      await page.goto("/feedback?status=all");
+      await expect(page.getByRole("navigation", { name: "Pagination" })).toContainText(/Page 1 of \d+/);
+      await expect(page.locator("h2").getByRole("link", { name: `Paged request 34 ${suffix}` })).toBeVisible();
+      await expect(page.locator("h2").getByRole("link", { name: `Paged request 0 ${suffix}` })).toHaveCount(0);
+      await page.getByRole("link", { name: "Next" }).click();
+      await expect(page).toHaveURL(/status=all&page=2/);
+      await expect(page.locator("h2").getByRole("link", { name: `Paged request 0 ${suffix}` })).toBeVisible();
+      await expectAccessible(page);
+
+      // the project page counts them all and links to the rest
+      const project = await db.project.findUniqueOrThrow({ where: { id: template.projectId }, select: { slug: true } });
+      await page.goto(`/p/${project.slug}`);
+      await expect(page.getByRole("heading", { name: /^Feedback requests \((3[5-9]|[4-9]\d)\)$/ })).toBeVisible();
+      await page.getByRole("link", { name: /^All \d+ requests$/ }).click();
+      await expect(page).toHaveURL(new RegExp(`project=${project.slug}`));
+      await expect(page.getByText("Requests about one project.")).toBeVisible();
+
+      // moderation: every agent can be reached, however many there are
+      for (let i = 0; i < 51; i++) {
+        const username = `e2e-bulk-${suffix}-${i}`;
+        await db.user.create({ data: { username, kind: "agent", agentProfile: { create: { status: "active", model: "bulk" } } } });
+        agentNames.push(username);
+      }
+      await signIn(page, "maxwell@example.test", "/moderation/agents");
+      await page.goto("/moderation/agents");
+      const reached = new Set<string>();
+      for (let p = 0; p < 10; p++) {
+        await expect(page.getByRole("table")).toBeVisible();
+        for (const name of await page.getByRole("link", { name: new RegExp(`^@e2e-bulk-${suffix}-`) }).allTextContents()) reached.add(name.slice(1));
+        const next = page.getByRole("navigation", { name: "Agents pages" }).getByRole("link", { name: "Next" });
+        if ((await next.count()) === 0) break;
+        await next.click();
+        await expect(page).toHaveURL(new RegExp(`page=${p + 2}`));
+      }
+      expect(reached.size).toBe(51);
+      await expect(page.getByRole("heading", { name: /^Agents \(\d+\)$/ })).toBeVisible();
+    } finally {
+      await db.user.deleteMany({ where: { username: { in: agentNames } } });
+      await db.feedbackRequest.deleteMany({ where: { id: { in: requestIds } } });
+      await db.thread.deleteMany({ where: { id: { in: threadIds } } });
+      await db.$disconnect();
+    }
+  });
+
 });

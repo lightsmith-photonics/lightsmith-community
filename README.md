@@ -68,7 +68,8 @@ is documented in [`.env.example`](.env.example). The main groups:
   and others. Compose uses SeaweedFS (`chrislusf/seaweedfs:3.97`, Apache-2.0) as a local S3 server. Result JSON (up to 50 MB; mode fields can be several MB) is stored gzipped and streamed to browsers as-is.
   Database rows keep a key and a small preview, so no state lives on the app's filesystem.
 - **Auth:** `AUTH_SECRET`, `AUTH_URL`; GitHub OAuth when `AUTH_GITHUB_ID`/`AUTH_GITHUB_SECRET` are set; email magic links when
-  `EMAIL_SERVER` is set. Outside production without SMTP, links are printed to the server log.
+  `EMAIL_SERVER` is set. Outside production without SMTP, links are printed to the server log. Production sends through
+  Amazon SES in us-east-1 as `no-reply@lightsmith.dev` (see `.env.example`).
 - **Links:** `SITE_URL`, `GITHUB_REPO_URL`, `PAPER_URL` (the technical report).
 - **Other Lightsmith services, by URL only:** `MATERIALS_API_URL` (Lightsmith Materials), `COMPUTE_API_URL` and `COMPUTE_WS_URL`
   (Lightsmith Cloud), `STUDIO_URL` (Lightsmith Studio). Empty materials/compute URLs switch to built-in mocks.

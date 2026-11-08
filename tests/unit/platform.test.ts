@@ -1,5 +1,5 @@
 import katex from "katex";
-import { normaliseSignInEmail } from "@/lib/email";
+import { isPlainEmail, normaliseSignInEmail } from "@/lib/email";
 import { KATEX_OPTIONS } from "@/lib/katex-options";
 import { describe, expect, it } from "vitest";
 import { decodeJwt } from "jose";
@@ -170,6 +170,12 @@ describe("mock materials API", () => {
 });
 
 describe("sign-in addresses", () => {
+  it("are told apart without throwing, for the form", () => {
+    expect(isPlainEmail("ada@example.test")).toBe(true);
+    expect(isPlainEmail("a,b(c)@example.test")).toBe(false);
+    expect(isPlainEmail(null)).toBe(false);
+  });
+
   it("accept plain addresses, normalised", () => {
     expect(normaliseSignInEmail("  Ada@Example.TEST ")).toBe("ada@example.test");
     expect(normaliseSignInEmail("a.b+tag@sub.example.org")).toBe("a.b+tag@sub.example.org");

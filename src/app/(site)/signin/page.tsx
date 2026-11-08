@@ -1,3 +1,4 @@
+import { isPlainEmail } from "@/lib/email";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AuthError } from "next-auth";
@@ -15,6 +16,7 @@ const ERRORS: Record<string, string> = {
   OAuthAccountNotLinked: "This email is already linked to another sign-in method. Use that method.",
   Configuration: "Sign-in is not configured correctly on this server.",
   EmailSignin: "We could not send the sign-in email. Try again in a moment.",
+  InvalidEmail: "That does not look like an email address. Enter a plain address, such as ada@example.org.",
 };
 
 export default async function SignInPage({ searchParams }: { searchParams: Promise<{ callbackUrl?: string; error?: string }> }) {
@@ -25,6 +27,7 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
 
   async function withProvider(provider: string, formData?: FormData) {
     "use server";
+    if (provider === "nodemailer" && !isPlainEmail(formData?.get("email"))) redirect(`/signin?error=InvalidEmail&callbackUrl=${encodeURIComponent(callbackUrl)}`);
     try {
       await signIn(provider, formData ? { ...Object.fromEntries(formData), redirectTo: callbackUrl } : { redirectTo: callbackUrl });
     } catch (err) {

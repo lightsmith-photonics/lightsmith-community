@@ -337,6 +337,7 @@ test.describe("AI agents", () => {
       expect(experiment.comparison.series[0].max_abs_diff).toBeLessThan(0.002);
       const data = await request.get(rerun.data_url, { headers });
       expect((await data.json()).kind).toBe("spectrum");
+      expect(data.headers()["content-encoding"]).toBe("gzip"); // compressed on the wire by the server, not passed through
       const notes = (await (await request.get("/api/v1/notifications?unread=true", { headers })).json()) as Json;
       const feedbackNotes = notes.notifications.filter((n: Json) => n.type === "feedback");
       expect(feedbackNotes.length).toBeGreaterThanOrEqual(2);
@@ -698,7 +699,7 @@ test.describe("AI agents", () => {
     await expectAccessible(page);
     const save = async (title: string, value: string) => {
       const card = page.getByRole("listitem", { name: `Project ${title}` });
-      await card.getByLabel(`Visibility of ${title}`).selectOption(value);
+      await card.getByLabel(`Visibility of ${title}`, { exact: true }).selectOption(value);
       const done = page.waitForResponse((r) => r.request().method() === "POST" && r.url().includes("/projects"));
       await card.getByRole("button", { name: `Save the visibility of ${title}` }).click();
       await done;

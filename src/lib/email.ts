@@ -6,6 +6,15 @@
 
 const PLAIN_ADDRESS = /^[\p{L}\p{N}.!#$%&'*+/=?^_`{|}~-]+@[\p{L}\p{N}-]+(\.[\p{L}\p{N}-]+)+$/u;
 
+export function isPlainEmail(raw: unknown): boolean {
+  try {
+    normaliseSignInEmail(raw);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function normaliseSignInEmail(raw: unknown): string {
   // NFKC first: a look-alike of "@" must become a real one and then fail the check.
   const email = String(raw ?? "").normalize("NFKC").toLowerCase().trim();

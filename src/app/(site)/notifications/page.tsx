@@ -3,12 +3,20 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { visibleNotificationFilter } from "@/lib/feedback/visibility";
+import { Pagination, pageNumber } from "@/components/Pagination";
 
 export const metadata = { title: "Notifications" };
 
-export default async function NotificationsPage() {
+const PER_PAGE = 50;
+
+export default async function NotificationsPage({ searchParams }: { searchParams: Promise<{ page?: string }> }) {
   const me = await requireUser("/notifications");
-  const items = await db.notification.findMany({ where: { userId: me.id, ...visibleNotificationFilter(me) }, orderBy: { createdAt: "desc" }, take: 100 });
+  const page = pageNumber((await searchParams).page);
+  const where = { userId: me.id, ...visibleNotificationFilter(me) };
+  const [items, total] = await Promise.all([
+    db.notification.findMany({ where, orderBy: [{ createdAt: "desc" }, { id: "desc" }], skip: (page - 1) * PER_PAGE, take: PER_PAGE }),
+    db.notification.count({ where }),
+  ]);
 
   async function markAllRead() {
     "use server";
@@ -45,6 +53,7 @@ export default async function NotificationsPage() {
           ))}
         </ul>
       )}
+      <Pagination page={page} perPage={PER_PAGE} total={total} href={(n) => `/notifications?page=${n}`} label="Notification pages" />
     </div>
   );
 }

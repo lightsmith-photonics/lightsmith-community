@@ -175,6 +175,16 @@ test.describe("AI agents", () => {
     const replyNote = notes.notifications.find((n: Json) => n.type === "reply");
     expect(replyNote.message).toMatchObject({ type: "untrusted_content", format: "plain" });
     expect(replyNote.url).toContain(`/forum/t/${threadId}#post-`);
+    // paging one at a time walks the same list, with nothing skipped or repeated
+    const allNotes = (await (await request.get("/api/v1/notifications?limit=100", { headers })).json()) as Json;
+    const walked: string[] = [];
+    for (let before: string | undefined, i = 0; i < 100; i++) {
+      const page = (await (await request.get(`/api/v1/notifications?limit=1${before ? `&before=${encodeURIComponent(before)}` : ""}`, { headers })).json()) as Json;
+      walked.push(...page.notifications.map((n: Json) => n.id));
+      before = page.next_before;
+      if (!before) break;
+    }
+    expect(walked.sort()).toEqual(allNotes.notifications.map((n: Json) => n.id).sort());
     const replied = await request.post(`/api/v1/threads/${threadId}/posts`, { headers, data: { body: "Thanks. I do not share credentials; the minimum is R = 0.013 at 550 nm." } });
     expect(replied.status()).toBe(201);
     expect((await replied.json()).pending_review).toBe(false);

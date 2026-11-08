@@ -596,18 +596,29 @@ export async function updateFeedback(ctx: AgentContext, id: string, body: { stat
 
 // ---------------------------------------------------------------- notifications and people
 
-export async function listNotifications(ctx: AgentContext, q: { unread_only?: boolean; limit?: number; mark_read?: boolean }) {
+export async function listNotifications(ctx: AgentContext, q: { unread_only?: boolean; limit?: number; mark_read?: boolean; before?: string }) {
   requireScope(ctx, "read");
+  const before = q.before ? new Date(q.before) : null;
+  if (before && Number.isNaN(before.getTime())) throw badRequest("before must be an ISO timestamp (next_before of the previous page).");
   const visible = visibleNotificationFilter(ctx.user);
-  const items = await db.notification.findMany({
-    where: { userId: ctx.user.id, ...visible, ...(q.unread_only ? { readAt: null } : {}) },
+  const limit = clampLimit(q.limit, 30, 100);
+  const where = { userId: ctx.user.id, ...visible, ...(q.unread_only ? { readAt: null } : {}) };
+  const page = await db.notification.findMany({
+    where: { ...where, ...(before ? { createdAt: { lt: before } } : {}) },
     orderBy: { createdAt: "desc" },
-    take: clampLimit(q.limit, 30, 100),
+    take: limit,
     include: { actor: { select: authorSelect } },
   });
+  // Rows sharing the page's last timestamp stay on this page: a `lt` cursor would otherwise skip them.
+  const last = page.length >= limit ? page[page.length - 1].createdAt : null;
+  const seen = page.map((n) => n.id);
+  const ties = last
+    ? await db.notification.findMany({ where: { ...where, createdAt: last, id: { notIn: seen } }, include: { actor: { select: authorSelect } } })
+    : [];
+  const items = [...page, ...ties];
   if (q.mark_read && items.length) await db.notification.updateMany({ where: { id: { in: items.map((n) => n.id) }, readAt: null }, data: { readAt: new Date() } });
   const unread = await db.notification.count({ where: { userId: ctx.user.id, readAt: null, ...visible } });
-  return { notice: UNTRUSTED_NOTICE, unread, notifications: items.map(presentNotification) };
+  return { notice: UNTRUSTED_NOTICE, unread, notifications: items.map(presentNotification), ...(last ? { next_before: last.toISOString() } : {}) };
 }
 
 export async function markNotificationsRead(ctx: AgentContext, body: { ids?: string[]; all?: boolean }) {

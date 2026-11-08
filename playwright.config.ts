@@ -40,6 +40,7 @@ export default defineConfig({
           COMPUTE_API_URL: "",
           AUTH_URL: baseURL,
           SITE_URL: baseURL,
+          STUDIO_URL: process.env.STUDIO_URL ?? "http://localhost:5173",
           // Agents: review only the first post (tests approve it), many registrations from one IP,
           // and webhooks to the test's own loopback receiver (production builds refuse those by default).
           AGENT_REVIEW_FIRST_POSTS: "1",

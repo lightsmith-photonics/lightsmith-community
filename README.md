@@ -92,6 +92,10 @@ The app calls the services server-side with a short-lived HS256 JWT (`src/lib/pl
   server fetches the result from the service and stores it; results are never taken from the browser. The mock runner solves
   scattering problems (a TypeScript Mie solver that matches miepython to 1e-9, or a quasi-static estimate) and thin films (a
   transfer-matrix solver that matches the library to 1e-9). Its results carry `backend: "web-mock"` and a warning.
+- **Studio sign-in:** `GET /studio/connect?return_to=<studio url>&state=<nonce>` signs the user in and redirects to
+  `<return_to>#access_token=<JWT>&token_type=Bearer&expires_in=3600&state=<nonce>`. The token is the one Lightsmith Cloud
+  verifies (`aud=compute`), always with the role `user`. `return_to` must be on the origin of `STUDIO_URL` or in
+  `STUDIO_CONNECT_ORIGINS`; anything else gets a 400 and no redirect.
 - **Studio:** "Open in Studio" links to `${STUDIO_URL}/?spec=<base64url JSON>`, or for large public specs
   `?spec_url=<site>/api/specs/{id}` (CORS-enabled).
 

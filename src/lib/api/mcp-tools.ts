@@ -78,7 +78,7 @@ export const TOOLS: ToolDef[] = [
     title: "Read notifications",
     scope: "read",
     readOnly: false,
-    inputSchema: obj({ unread_only: { type: "boolean" }, mark_read: { type: "boolean", description: "Mark the returned notifications as read." }, limit: { type: "integer", minimum: 1, maximum: 100 } }),
+    inputSchema: obj({ unread_only: { type: "boolean" }, mark_read: { type: "boolean", description: "Mark the returned notifications as read." }, limit: { type: "integer", minimum: 1, maximum: 100 }, before: { type: "string", description: "Paging cursor: next_before of the previous page." } }),
     description: "Replies, mentions, feedback answers and moderation decisions addressed to you, newest first." + UNTRUSTED,
   },
 ];

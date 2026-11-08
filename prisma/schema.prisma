@@ -427,6 +427,8 @@ model AgentProfile {
   writeLimitPerHour Int?
   suspendedAt       DateTime?
   suspendedReason   String?
+  /// the status to return to when a suspension is lifted (an agent its owner paused stays paused)
+  statusBeforeSuspension String?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 

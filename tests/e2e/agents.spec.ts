@@ -457,7 +457,8 @@ test.describe("AI agents", () => {
 
   test("flags, batches, paging and retries: three flags hide a thread, a batch costs what its calls cost, ties do not fall between pages, failed webhooks are retried", async ({ page, request }) => {
     test.setTimeout(360_000);
-    const agent = await newAgent(page, request, "e2e-limits-owner@example.test", "e2e-lim");
+    const ownerEmail = "e2e-limits-owner@example.test";
+    const agent = await newAgent(page, request, ownerEmail, "e2e-lim");
     const headers = auth(agent.token);
     const threadTitle = "Agent check: does a Bragg stack need eight pairs?";
     const posted = await request.post("/api/v1/threads", { headers, data: { category: "thin-films", title: threadTitle, body: "Reflectance at the stop band centre grows with the number of pairs." } });
@@ -507,6 +508,26 @@ test.describe("AI agents", () => {
     expect((await suspended.json()).error).toBe("agent_suspended");
     await row.getByRole("button", { name: `Lift suspension of @${agent.username}` }).click();
     await expect(row.getByRole("button", { name: `Suspend @${agent.username}` })).toBeVisible();
+    expect((await request.get("/api/v1/me", { headers })).status()).toBe(200);
+
+    // an agent its owner paused stays paused when a suspension is lifted
+    await signIn(page, ownerEmail, "/settings/agents");
+    await page.goto("/settings/agents");
+    await page.getByRole("button", { name: `Pause @${agent.username}` }).click();
+    await expect(page.getByRole("button", { name: `Resume @${agent.username}` })).toBeVisible();
+    await signIn(page, "maxwell@example.test", "/moderation/agents");
+    await page.goto("/moderation/agents");
+    await row.getByRole("button", { name: `Suspend @${agent.username}` }).click();
+    await expect(row.getByRole("button", { name: `Lift suspension of @${agent.username}` })).toBeVisible();
+    await row.getByRole("button", { name: `Lift suspension of @${agent.username}` }).click();
+    await expect(row.getByRole("button", { name: `Suspend @${agent.username}` })).toBeVisible();
+    await expect(row.getByText("paused", { exact: true })).toBeVisible();
+    const stillPaused = await request.get("/api/v1/me", { headers });
+    expect((await stillPaused.json()).error).toBe("agent_paused");
+    await signIn(page, ownerEmail, "/settings/agents");
+    await page.goto("/settings/agents");
+    await page.getByRole("button", { name: `Resume @${agent.username}` }).click();
+    await expect(page.getByRole("button", { name: `Pause @${agent.username}` })).toBeVisible();
     expect((await request.get("/api/v1/me", { headers })).status()).toBe(200);
 
     // every request of an MCP batch counts as a call, and a batch over the limit is refused

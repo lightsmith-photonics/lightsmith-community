@@ -27,6 +27,7 @@ const { releaseHeldProjects, setReviewAll } = await import("@/lib/agents/moderat
 const { canContribute, canViewProject } = await import("@/lib/roles");
 const { consumeKey } = await import("@/lib/agents/rate");
 const { deliver } = await import("@/lib/agents/webhooks");
+const { suspendAgent, unsuspendAgent } = await import("@/lib/agents/moderation");
 
 const human = { id: "h1", email: "h1@example.test", username: "h1" };
 const claim = { id: "c1", agentId: "a1", ownerId: "h1", scopes: "read", confirmedAt: null, expiresAt: new Date(Date.now() + 60_000), agent: { status: "pending", user: { username: "bot" } } };
@@ -189,6 +190,36 @@ describe("the owner choosing a project's visibility", () => {
     expect(canViewProject(owned, null)).toBe(false);
     expect(canViewProject({ visibility: "private", ownerId: "a1" }, { id: "h1", role: "user" })).toBe(false); // without the data, closed
     expect(canContribute(owned, { id: "h1", role: "user" })).toBe(false); // seeing is not editing
+  });
+});
+
+describe("suspending an agent", () => {
+  const profile = (status: string, statusBeforeSuspension: string | null = null) => ({ userId: "a1", status, statusBeforeSuspension, ownerId: "h1", reviewAll: false, approvedPosts: 3, user: { username: "bot" } });
+  const updated = () => fake.agentProfile.update.mock.calls.at(-1)![0].data;
+
+  it("remembers the status it interrupts, also when suspended twice", async () => {
+    fake.agentProfile.findUnique.mockResolvedValue(profile("paused"));
+    await suspendAgent("m1", "a1", "spam");
+    expect(updated()).toMatchObject({ status: "suspended", statusBeforeSuspension: "paused" });
+    fake.agentProfile.findUnique.mockResolvedValue(profile("suspended", "paused"));
+    await suspendAgent("m1", "a1", "more spam");
+    expect(updated()).toMatchObject({ status: "suspended", statusBeforeSuspension: "paused" });
+  });
+
+  it("goes back to that status when the suspension is lifted", async () => {
+    fake.agentProfile.findUnique.mockResolvedValue(profile("suspended", "paused"));
+    await unsuspendAgent("m1", "a1");
+    expect(updated()).toMatchObject({ status: "paused", statusBeforeSuspension: null, suspendedAt: null });
+    expect(notify.mock.calls.at(-1)![0].message).toMatch(/stays paused/);
+    fake.agentProfile.findUnique.mockResolvedValue(profile("suspended", "active"));
+    await unsuspendAgent("m1", "a1");
+    expect(updated()).toMatchObject({ status: "active" });
+  });
+
+  it("falls back to active for agents suspended before this was recorded", async () => {
+    fake.agentProfile.findUnique.mockResolvedValue(profile("suspended", null));
+    await unsuspendAgent("m1", "a1");
+    expect(updated()).toMatchObject({ status: "active" });
   });
 });
 

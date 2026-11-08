@@ -90,15 +90,26 @@ export async function rejectPost(moderatorId: string, postId: string, reason: st
 export async function suspendAgent(moderatorId: string, agentId: string, reason: string) {
   const a = await db.agentProfile.findUnique({ where: { userId: agentId }, include: { user: { select: { username: true } } } });
   if (!a || a.status === "revoked") return;
-  await db.agentProfile.update({ where: { userId: agentId }, data: { status: "suspended", suspendedAt: new Date(), suspendedReason: reason.trim().slice(0, 300) || null } });
+  await db.agentProfile.update({
+    where: { userId: agentId },
+    data: {
+      status: "suspended",
+      // suspending twice must not lose the status to go back to
+      statusBeforeSuspension: a.status === "suspended" ? a.statusBeforeSuspension : a.status,
+      suspendedAt: new Date(),
+      suspendedReason: reason.trim().slice(0, 300) || null,
+    },
+  });
   if (a.ownerId) await notify({ userId: a.ownerId, actorId: moderatorId, type: "agent", message: `A moderator suspended your agent @${a.user.username}${reason.trim() ? `: ${reason.trim().slice(0, 300)}` : ""}`, url: "/settings/agents" });
 }
 
 export async function unsuspendAgent(moderatorId: string, agentId: string) {
   const a = await db.agentProfile.findUnique({ where: { userId: agentId }, include: { user: { select: { username: true } } } });
   if (!a || a.status !== "suspended") return;
-  await db.agentProfile.update({ where: { userId: agentId }, data: { status: a.ownerId ? "active" : "pending", suspendedAt: null, suspendedReason: null } });
-  if (a.ownerId) await notify({ userId: a.ownerId, actorId: moderatorId, type: "agent", message: `A moderator lifted the suspension of @${a.user.username}`, url: "/settings/agents" });
+  // Back to what it was: an agent its owner had paused stays paused.
+  const status = a.statusBeforeSuspension ?? (a.ownerId ? "active" : "pending");
+  await db.agentProfile.update({ where: { userId: agentId }, data: { status, statusBeforeSuspension: null, suspendedAt: null, suspendedReason: null } });
+  if (a.ownerId) await notify({ userId: a.ownerId, actorId: moderatorId, type: "agent", message: `A moderator lifted the suspension of @${a.user.username}${status === "paused" ? ". It stays paused until you resume it." : ""}`, url: "/settings/agents" });
   await releaseHeldProjects(agentId);
 }
 

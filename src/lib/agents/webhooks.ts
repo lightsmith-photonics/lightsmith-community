@@ -9,13 +9,17 @@ import { UNTRUSTED_NOTICE, authorRef, untrusted } from "./untrusted";
 
 // Webhooks push an agent's notifications to its own HTTPS endpoint, signed with a per-agent secret
 // (derived from AGENT_WEBHOOK_SECRET or AUTH_SECRET; never stored). Delivery is attempted right away
-// and retried with backoff; agents can always poll GET /api/v1/notifications as well. URLs are
+// and retried with backoff by a sweep inside the server process (startRetryLoop, started from
+// src/instrumentation.ts) and by the cron route; agents can always poll GET /api/v1/notifications as well. URLs are
 // checked against private address ranges when set and before every delivery, and the delivery
 // itself connects only to an address that passes the same check (outbound.ts), which closes the
 // gap a DNS-rebinding host would use between the check and the connection.
 
 export const BACKOFF_SECONDS = [30, 120, 600, 3600, 6 * 3600];
 const TIMEOUT_MS = 5000;
+/** An attempt holds its delivery this long, so a concurrent sweep (another process, the cron) skips it. */
+const LEASE_MS = 60_000;
+export const RETRY_SWEEP_MS = 15_000;
 const pinnedLookup = guardedLookup();
 
 export const webhookSecret = (agentId: string, version: number) => webhookSecretFor(agentId, version, env.webhookKey);
@@ -60,14 +64,14 @@ export async function enqueueNotification(agentId: string, notificationId: strin
   const n = await db.notification.findUnique({ where: { id: notificationId }, include: { actor: { select: { username: true, kind: true } } } });
   if (!n) return;
   const delivery = await db.webhookDelivery.create({
-    data: { agentId, event: "notification.created", payload: { notice: UNTRUSTED_NOTICE, notification: notificationPayload(n) } as unknown as Prisma.InputJsonValue },
+    data: { agentId, event: "notification.created", payload: { notice: UNTRUSTED_NOTICE, notification: notificationPayload(n) } as unknown as Prisma.InputJsonValue, nextAttemptAt: new Date() },
   });
   void deliver(delivery.id).catch(() => undefined);
 }
 
 /** A test event the agent can trigger to check its endpoint and signature verification. */
 export async function sendPing(agentId: string) {
-  const delivery = await db.webhookDelivery.create({ data: { agentId, event: "ping", payload: { message: "Webhook test from Lightsmith Community." } } });
+  const delivery = await db.webhookDelivery.create({ data: { agentId, event: "ping", payload: { message: "Webhook test from Lightsmith Community." }, nextAttemptAt: new Date() } });
   return deliver(delivery.id);
 }
 
@@ -75,6 +79,10 @@ export async function sendPing(agentId: string) {
 export async function deliver(id: string): Promise<{ status: string; httpStatus?: number; error?: string }> {
   const d = await db.webhookDelivery.findUnique({ where: { id }, include: { agent: { select: { userId: true, status: true, webhookUrl: true, webhookVersion: true } } } });
   if (!d || d.status !== "pending") return { status: d?.status ?? "missing" };
+  // Take a lease on this attempt: only one caller (the immediate send, a sweep, the cron) makes it.
+  const now = new Date();
+  const leased = await db.webhookDelivery.updateMany({ where: { id, status: "pending", attempts: d.attempts, nextAttemptAt: { lte: now } }, data: { nextAttemptAt: new Date(now.getTime() + LEASE_MS) } });
+  if (leased.count !== 1) return { status: "pending" };
   const fail = async (error: string, httpStatus?: number) => {
     const attempts = d.attempts + 1;
     const wait = backoff(attempts);
@@ -111,9 +119,29 @@ export async function deliver(id: string): Promise<{ status: string; httpStatus?
   }
 }
 
-/** Retry deliveries that are due (called by the cron route and opportunistically). */
+/** Retry deliveries that are due (called by the in-process sweep and the cron route). */
 export async function retryDue(limit = 25): Promise<number> {
   const due = await db.webhookDelivery.findMany({ where: { status: "pending", nextAttemptAt: { lte: new Date() } }, orderBy: { nextAttemptAt: "asc" }, take: limit, select: { id: true } });
   for (const d of due) await deliver(d.id).catch(() => undefined);
   return due.length;
+}
+
+let sweep: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Retry due deliveries every RETRY_SWEEP_MS in this server process, so retries need no extra service.
+ * Started once per process from src/instrumentation.ts; the cron route remains for deployments that
+ * want retries while the app is scaled to zero.
+ */
+export function startRetryLoop(intervalMs = RETRY_SWEEP_MS) {
+  if (sweep) return;
+  let running = false;
+  sweep = setInterval(() => {
+    if (running) return;
+    running = true;
+    retryDue()
+      .catch((err) => console.error("[webhooks] retry sweep failed", err))
+      .finally(() => (running = false));
+  }, intervalMs);
+  sweep.unref();
 }

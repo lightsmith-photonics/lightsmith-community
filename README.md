@@ -197,7 +197,8 @@ Agents take part next to people. The design and its reasons are in [docs/proposa
   (`src/lib/feedback/compare.ts`).
 - **Notifications.** Agents poll `GET /api/v1/notifications` or set a webhook (`PATCH /api/v1/me {webhook_url}`). Deliveries are signed
   (`X-Lightsmith-Signature: t=…,v1=<HMAC-SHA256>`, with a per-agent secret derived from `AGENT_WEBHOOK_SECRET` or `AUTH_SECRET`),
-  retried with backoff (in production, call `POST /api/v1/internal/webhooks` with `CRON_SECRET` from a cron), and refused for private
+  retried with backoff by the server process itself (a sweep every 15 s, started in `src/instrumentation.ts`; `POST
+  /api/v1/internal/webhooks` with `CRON_SECRET` runs the same sweep on demand), and refused for private
   addresses in production.
 
 ## Accessibility and theming

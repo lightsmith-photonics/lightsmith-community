@@ -155,7 +155,11 @@ export async function startClaim(human: Human, rawCode: string, scopes: Scope[])
   if (owned >= AGENTS_PER_OWNER()) throw new ApiError(409, "too_many_agents", `You already own ${owned} agents (the limit is ${AGENTS_PER_OWNER()}). Revoke one first.`);
   if (scopes.length === 0) throw new ApiError(400, "bad_request", "Grant at least one scope.");
   const link = newLinkSecret();
-  await db.agentClaim.create({ data: { agentId: agent.userId, ownerId: human.id, scopes: formatScopes(scopes), confirmHash: link.hash, expiresAt: new Date(Date.now() + CLAIM_LINK_TTL_S * 1000) } });
+  const linkExpires = new Date(Date.now() + CLAIM_LINK_TTL_S * 1000);
+  await db.agentClaim.create({ data: { agentId: agent.userId, ownerId: human.id, scopes: formatScopes(scopes), confirmHash: link.hash, expiresAt: linkExpires } });
+  // The registration must outlive the emailed link, or purgeExpiredRegistrations could delete the agent
+  // (and the claim with it) while the person is still on their way to confirm.
+  await db.agentProfile.updateMany({ where: { userId: agent.userId, status: "pending", claimExpiresAt: { lt: linkExpires } }, data: { claimExpiresAt: linkExpires } });
   const url = `${env.siteUrl}/agents/claim/confirm?token=${link.secret}`;
   const mail = linkEmail({
     intro: [
@@ -179,14 +183,20 @@ export async function confirmClaim(human: Human, secret: string) {
   if (claim.expiresAt < new Date()) throw new ApiError(410, "expired", "This confirmation link expired. Claim the agent again.");
   if (claim.agent.status !== "pending") throw new ApiError(409, "already_claimed", "This agent was already claimed.");
   const now = new Date();
-  await db.$transaction([
-    db.agentClaim.update({ where: { id: claim.id }, data: { confirmedAt: now } }),
-    db.agentProfile.update({
-      where: { userId: claim.agentId },
+  // Conditional updates, so that of two confirmations racing (the same link twice, or two people who
+  // both claimed the agent) exactly one wins and the other changes nothing.
+  await db.$transaction(async (tx) => {
+    const used = await tx.agentClaim.updateMany({ where: { id: claim.id, confirmedAt: null }, data: { confirmedAt: now } });
+    if (used.count !== 1) throw new ApiError(404, "not_found", "This confirmation link is unknown or was already used.");
+    const owned = await tx.agentProfile.count({ where: { ownerId: human.id, status: { not: "revoked" } } });
+    if (owned >= AGENTS_PER_OWNER()) throw new ApiError(409, "too_many_agents", `You already own ${owned} agents (the limit is ${AGENTS_PER_OWNER()}). Revoke one first.`);
+    const claimed = await tx.agentProfile.updateMany({
+      where: { userId: claim.agentId, status: "pending" },
       // the agent gets time to collect its token with the device code
       data: { ownerId: human.id, status: "active", claimedAt: now, grantedScopes: claim.scopes, claimExpiresAt: new Date(now.getTime() + REGISTRATION_TTL_S * 1000) },
-    }),
-  ]);
+    });
+    if (claimed.count !== 1) throw new ApiError(409, "already_claimed", "This agent was already claimed.");
+  });
   await notify({ userId: human.id, type: "agent", message: `You now own the agent @${claim.agent.user.username}. Manage it in Settings → Agents.`, url: "/settings/agents" });
   return { username: claim.agent.user.username! };
 }

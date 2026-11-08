@@ -4,7 +4,7 @@ import { retryDue } from "@/lib/agents/webhooks";
 
 export const dynamic = "force-dynamic";
 
-/** For a cron (every minute or so): retry webhook deliveries that are due. Needs Authorization: Bearer $CRON_SECRET. */
+/** Retry webhook deliveries that are due, on demand (e.g. from a cron); the server also sweeps every 15 s. Needs Authorization: Bearer $CRON_SECRET. */
 export async function POST(req: Request) {
   const secret = env.cronSecret;
   const got = Buffer.from(req.headers.get("authorization") ?? "");

@@ -506,7 +506,8 @@ test.describe("AI agents", () => {
     const agent = await newAgent(page, request, ownerEmail, "e2e-lim");
     const headers = auth(agent.token);
     const threadTitle = "Agent check: does a Bragg stack need eight pairs?";
-    const posted = await request.post("/api/v1/threads", { headers, data: { category: "thin-films", title: threadTitle, body: "Reflectance at the stop band centre grows with the number of pairs." } });
+    const flagsDb = e2eDb();
+    const posted = await request.post("/api/v1/threads", { headers, data: { category: "thin-films", title: threadTitle, body: "Reflectance at the stop band centre grows with the number of pairs, @rayleigh." } });
     expect(posted.status()).toBe(201);
     const threadId = ((await posted.json()) as Json).thread.id as string;
     await approveHeldPosts(page, agent.username);
@@ -524,7 +525,20 @@ test.describe("AI agents", () => {
     expect((await page.goto(`/forum/t/${threadId}`))?.status()).toBe(404);
     await page.goto("/forum/thin-films");
     await expect(page.getByRole("link", { name: threadTitle })).toHaveCount(0);
+
+    // a moderator dismisses one flag first: approving is still no first approval, and nobody is notified twice
+    const mentionedInThread = () => flagsDb.notification.count({ where: { threadId, type: "mention", user: { username: "rayleigh" } } });
+    expect(await mentionedInThread()).toBe(1);
+    await signIn(page, "maxwell@example.test", "/moderation/forum");
+    await page.goto("/moderation/forum");
+    const report = page.getByRole("listitem").filter({ hasText: threadTitle }).first();
+    await report.getByRole("button", { name: /dismiss/i }).click();
+    await expect(page.getByRole("listitem").filter({ hasText: threadTitle })).toHaveCount(2);
+    const approvalsBefore = ((await (await request.get("/api/v1/me", { headers })).json()) as Json).review.approved_posts;
     await approveHeldPosts(page, agent.username);
+    expect(((await (await request.get("/api/v1/me", { headers })).json()) as Json).review.approved_posts).toBe(approvalsBefore);
+    expect(await mentionedInThread()).toBe(1);
+    await flagsDb.$disconnect();
     await page.context().clearCookies();
     expect((await page.goto(`/forum/t/${threadId}`))?.status()).toBe(200);
     await page.goto("/forum/thin-films");

@@ -334,6 +334,8 @@ model Post {
   deletedAt        DateTime?
   /// held for moderator review (an agent's first posts, or flagged agent posts)
   pendingReview    Boolean       @default(false)
+  /// when open flags took it back into review: it was public before, so approving it again publishes nothing new
+  escalatedAt      DateTime?
   /// where it was written: "web" | "api" | "mcp"
   via              String        @default("web")
   createdAt        DateTime      @default(now())

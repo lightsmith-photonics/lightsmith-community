@@ -10,6 +10,10 @@ const fake = vi.hoisted(() => ({
   project: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   webhookDelivery: { findUnique: vi.fn(), updateMany: vi.fn(), update: vi.fn() },
   notification: { findFirst: vi.fn() },
+  post: { findUnique: vi.fn(), findFirst: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() },
+  thread: { findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
+  flag: { updateMany: vi.fn(), count: vi.fn() },
+  user: { findMany: vi.fn() },
   rateCounter: { deleteMany: vi.fn() },
   $queryRaw: vi.fn(),
   $transaction: vi.fn(),
@@ -17,9 +21,13 @@ const fake = vi.hoisted(() => ({
 const notify = vi.hoisted(() => vi.fn());
 const sendMail = vi.hoisted(() => vi.fn());
 const postJson = vi.hoisted(() => vi.fn());
+const requireUser = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/db", () => ({ db: fake }));
-vi.mock("@/lib/notify", () => ({ notify }));
+vi.mock("@/lib/session", () => ({ requireUser, getCurrentUser: requireUser, requireRole: requireUser }));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
+vi.mock("@/lib/notify", () => ({ notify, notifyMentions: vi.fn() }));
 vi.mock("@/lib/mail", () => ({ sendMail, linkEmail: () => ({ text: "link", html: "<a>link</a>" }) }));
 vi.mock("@/lib/agents/outbound", () => ({ postJson, guardedLookup: () => undefined }));
 
@@ -28,14 +36,15 @@ const { releaseHeldProjects, setReviewAll } = await import("@/lib/agents/moderat
 const { canContribute, canViewProject } = await import("@/lib/roles");
 const { consumeKey } = await import("@/lib/agents/rate");
 const { deliver } = await import("@/lib/agents/webhooks");
-const { suspendAgent, unsuspendAgent } = await import("@/lib/agents/moderation");
+const { approvePost, suspendAgent, unsuspendAgent } = await import("@/lib/agents/moderation");
+const { acceptAnswer } = await import("@/app/(site)/forum/actions");
 
 const human = { id: "h1", email: "h1@example.test", username: "h1" };
 const claim = { id: "c1", agentId: "a1", ownerId: "h1", scopes: "read", confirmedAt: null, expiresAt: new Date(Date.now() + 60_000), agent: { status: "pending", user: { username: "bot" } } };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  fake.$transaction.mockImplementation((fn: (tx: typeof fake) => unknown) => fn(fake));
+  fake.$transaction.mockImplementation((arg: unknown) => (typeof arg === "function" ? arg(fake) : Promise.all(arg as unknown[])));
   fake.$queryRaw.mockResolvedValue([{ count: 1 }]);
 });
 
@@ -221,6 +230,75 @@ describe("suspending an agent", () => {
     fake.agentProfile.findUnique.mockResolvedValue(profile("suspended", null));
     await unsuspendAgent("m1", "a1");
     expect(updated()).toMatchObject({ status: "active" });
+  });
+});
+
+describe("approving a held post", () => {
+  const post = (over: object) => ({
+    id: "p1", threadId: "t1", authorId: "a1", pendingReview: true, deletedAt: null, escalatedAt: null, author: { kind: "agent" }, thread: { title: "A thread", posts: [{ id: "p1" }] }, ...over,
+  });
+  const publishedPost = { id: "p1", body: "text", author: { id: "a1", username: "bot" }, feedbackResponse: null, thread: { id: "t1", authorId: "a1", title: "A thread", posts: [{ id: "p1" }], feedbackRequest: null } };
+
+  beforeEach(() => {
+    fake.post.update.mockResolvedValue({});
+    fake.thread.update.mockResolvedValue({});
+    fake.flag.updateMany.mockResolvedValue({ count: 0 });
+    fake.agentProfile.update.mockResolvedValue({});
+    fake.agentProfile.findUnique.mockResolvedValue({ status: "active", reviewAll: false, approvedPosts: 3, ownerId: "h1", user: { username: "bot" } });
+    fake.project.updateMany.mockResolvedValue({ count: 0 });
+    fake.post.findUniqueOrThrow.mockResolvedValue(publishedPost);
+    fake.user.findMany.mockResolvedValue([]);
+  });
+
+  it("counts a first approval and publishes the post", async () => {
+    fake.post.findUnique.mockResolvedValue(post({}));
+    await approvePost("m1", "p1");
+    expect(fake.agentProfile.update).toHaveBeenCalledWith({ where: { userId: "a1" }, data: { approvedPosts: { increment: 1 } } });
+    expect(fake.post.findUniqueOrThrow).toHaveBeenCalledOnce(); // publishEffects ran
+  });
+
+  it("does not count or publish again a post that flags took back, even after a flag was dismissed", async () => {
+    // no open flags left: a moderator dismissed them in the flag queue first
+    fake.post.findUnique.mockResolvedValue(post({ escalatedAt: new Date() }));
+    await approvePost("m1", "p1");
+    expect(fake.post.update).toHaveBeenCalledWith({ where: { id: "p1" }, data: { pendingReview: false } });
+    expect(fake.agentProfile.update).not.toHaveBeenCalled();
+    expect(fake.post.findUniqueOrThrow).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledOnce(); // only "a moderator approved your post"
+  });
+});
+
+describe("accepting an answer", () => {
+  const author = { id: "author", role: "user", username: "author" };
+
+  beforeEach(() => {
+    requireUser.mockResolvedValue(author);
+    fake.thread.findUnique.mockResolvedValue({ id: "t1", authorId: "author", title: "A thread", acceptedPostId: null });
+    fake.thread.findFirst.mockResolvedValue({ id: "t1" });
+    fake.thread.update.mockResolvedValue({});
+  });
+
+  it("accepts a visible post", async () => {
+    fake.post.findFirst.mockResolvedValue({ id: "p1", authorId: "a1", pendingReview: false, deletedAt: null });
+    await acceptAnswer("t1", "p1");
+    expect(fake.thread.update).toHaveBeenCalledWith({ where: { id: "t1" }, data: { acceptedPostId: "p1" } });
+    expect(notify).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a post held for review or removed", async () => {
+    for (const over of [{ pendingReview: true, deletedAt: null }, { pendingReview: false, deletedAt: new Date() }]) {
+      fake.post.findFirst.mockResolvedValue({ id: "p1", authorId: "a1", ...over });
+      await acceptAnswer("t1", "p1");
+    }
+    expect(fake.thread.update).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("can still undo an earlier accept of a post that flags took back", async () => {
+    fake.thread.findUnique.mockResolvedValue({ id: "t1", authorId: "author", title: "A thread", acceptedPostId: "p1" });
+    fake.post.findFirst.mockResolvedValue({ id: "p1", authorId: "a1", pendingReview: true, deletedAt: null });
+    await acceptAnswer("t1", "p1");
+    expect(fake.thread.update).toHaveBeenCalledWith({ where: { id: "t1" }, data: { acceptedPostId: null } });
   });
 });
 

@@ -57,8 +57,9 @@ export async function approvePost(moderatorId: string, postId: string) {
   const post = await db.post.findUnique({ where: { id: postId }, include: { thread: { include: { posts: { orderBy: { createdAt: "asc" }, take: 1, select: { id: true } } } }, author: { select: { kind: true } } } });
   if (!post || !post.pendingReview || post.deletedAt) return;
   const isFirst = post.thread.posts[0]?.id === post.id;
-  // A post put back into review by flags was public before: approving it again notifies nobody.
-  const escalated = (await db.flag.count({ where: { postId, status: "open" } })) >= FLAGS_TO_HOLD;
+  // A post put back into review by flags was public before: approving it again notifies nobody and is no
+  // first approval, also if a moderator has dismissed some of the flags in the meantime.
+  const escalated = Boolean(post.escalatedAt);
   await db.$transaction([
     db.post.update({ where: { id: postId }, data: { pendingReview: false } }),
     ...(isFirst ? [db.thread.update({ where: { id: post.threadId }, data: { pendingReview: false } })] : []),
@@ -137,7 +138,7 @@ export async function escalateFlaggedAgentPost(postId: string) {
   if (open < FLAGS_TO_HOLD) return;
   const isFirst = post.thread.posts[0]?.id === postId;
   await db.$transaction([
-    db.post.update({ where: { id: postId }, data: { pendingReview: true } }),
+    db.post.update({ where: { id: postId }, data: { pendingReview: true, escalatedAt: new Date() } }),
     ...(isFirst ? [db.thread.update({ where: { id: post.threadId }, data: { pendingReview: true } })] : []),
   ]);
 }

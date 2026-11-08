@@ -91,6 +91,8 @@ export async function acceptAnswer(threadId: string, postId: string) {
   const post = await db.post.findFirst({ where: { id: postId, threadId } });
   if (!post) return;
   const unaccept = thread.acceptedPostId === postId;
+  // Held or removed posts cannot become the answer. An earlier accept can still be undone.
+  if (!unaccept && (post.pendingReview || post.deletedAt)) return;
   await db.thread.update({ where: { id: threadId }, data: { acceptedPostId: unaccept ? null : postId } });
   if (!unaccept) {
     await notify({ userId: post.authorId, actorId: user.id, type: "accepted", message: `Your answer in “${thread.title}” was accepted`, url: `/forum/t/${threadId}#post-${postId}`, threadId });

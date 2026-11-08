@@ -9,8 +9,10 @@ import {
 } from "@aws-sdk/client-s3";
 
 // S3-compatible object storage for large payloads (result JSON). MinIO in docker-compose,
-// any S3 service in production. Objects are stored gzipped and served as-is with
-// Content-Encoding: gzip, so the server never inflates multi-megabyte field data.
+// any S3 service in production. Objects are stored gzipped. Responses inflate them as a stream, so
+// multi-megabyte field data is never held in memory; `next start` compresses the response again for
+// clients that accept it. Route handlers cannot pass the stored bytes through with Content-Encoding:
+// gzip, because Next (since 15.5.29) drops that header and clients would receive undecodable bytes.
 
 let client: S3Client | null = null;
 let bucketReady: Promise<void> | null = null;
@@ -59,12 +61,12 @@ export async function putJson(key: string, json: string): Promise<{ sizeBytes: n
   return { sizeBytes: Buffer.byteLength(json, "utf8") };
 }
 
-/** Gzipped bytes as a web stream, for responses with Content-Encoding: gzip. */
-export async function getGzipStream(key: string): Promise<ReadableStream | null> {
+/** The stored JSON as a web stream, inflated on the way out. */
+export async function getJsonStream(key: string): Promise<ReadableStream<Uint8Array> | null> {
   const { bucket, client } = config();
   try {
     const out = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-    return out.Body ? out.Body.transformToWebStream() : null;
+    return out.Body ? out.Body.transformToWebStream().pipeThrough(new DecompressionStream("gzip")) : null;
   } catch (err) {
     if ((err as { name?: string }).name === "NoSuchKey") return null;
     throw err;

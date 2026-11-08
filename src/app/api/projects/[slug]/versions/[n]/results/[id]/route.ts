@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { getGzipStream } from "@/lib/storage";
+import { getJsonStream } from "@/lib/storage";
 import { apiError, parseVersionNumber, readableProject } from "@/lib/versions/api";
 
 // A result linked to a version, streamed from object storage still gzipped (as /api/results/{id}).
@@ -11,12 +11,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ slug: s
   const number = parseVersionNumber(n);
   const result = number ? await db.versionResult.findFirst({ where: { id, version: { projectId: r.project.id, number } } }) : null;
   if (!result) return apiError(404, "not_found", "No such result in this version.");
-  const body = await getGzipStream(result.storageKey);
+  const body = await getJsonStream(result.storageKey);
   if (!body) return apiError(410, "missing_object", "The stored result could not be found.");
   const isPrivate = r.project.visibility === "private";
   const headers: Record<string, string> = {
     "Content-Type": "application/json; charset=utf-8",
-    "Content-Encoding": "gzip",
     "Content-Disposition": `inline; filename="${result.name.replace(/[^A-Za-z0-9_.-]+/g, "_")}.json"`,
     "Cache-Control": isPrivate ? "private, no-store" : "public, max-age=300",
     Vary: "Cookie",

@@ -68,7 +68,7 @@ is documented in [`.env.example`](.env.example). The main groups:
   Migrations are in `prisma/migrations`, including GIN indexes for forum full-text search.
 - **Object storage:** `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_REGION`, `S3_FORCE_PATH_STYLE`,
   `S3_CREATE_BUCKET`. The app speaks plain S3, so any S3-compatible store works in production: AWS S3, Cloudflare R2, Backblaze B2
-  and others. Compose uses SeaweedFS (`chrislusf/seaweedfs:3.97`, Apache-2.0) as a local S3 server. Result JSON (up to 50 MB; mode fields can be several MB) is stored gzipped and streamed to browsers as-is.
+  and others. Compose uses SeaweedFS (`chrislusf/seaweedfs:3.97`, Apache-2.0) as a local S3 server. Result JSON (up to 50 MB; mode fields can be several MB) is stored gzipped and inflated as it is streamed out; `next start` compresses responses again for clients that accept it.
   Database rows keep a key and a small preview, so no state lives on the app's filesystem.
 - **Auth:** `AUTH_SECRET`, `AUTH_URL`; GitHub OAuth when `AUTH_GITHUB_ID`/`AUTH_GITHUB_SECRET` are set; email magic links when
   `EMAIL_SERVER` is set. Outside production without SMTP, links are printed to the server log. Production sends through
@@ -151,7 +151,7 @@ message, a snapshot of all the project's specs, and the results linked to it. Th
 | `POST /api/projects/{slug}/versions` | `{specs: [{id?, name, problem}], message?, base?}`: the full spec set of the new version; `base` (the version you edited) gives 409 if it is stale |
 | `GET /api/projects/{slug}/versions/{n}` | One version with its specs and results |
 | `GET /api/projects/{slug}/versions/{n}/specs/{i}` | Raw problem JSON (CORS; used by "Open in Studio") |
-| `GET /api/projects/{slug}/versions/{n}/results/{id}` | Result JSON (gzip) |
+| `GET /api/projects/{slug}/versions/{n}/results/{id}` | Result JSON |
 | `POST /api/projects/{slug}/versions/{n}/restore` | `{message?}` |
 | `GET /api/projects/{slug}/diff?from=&to=` | Structured spec diff |
 | `POST /api/projects/{slug}/fork` | `{version?}` |
@@ -217,6 +217,7 @@ and a forum thread.
   project, and so do their forum threads and the notifications about them, in every view (`src/lib/feedback/visibility.ts`).
 - Server actions re-check ownership and roles; the forum only accepts attachments from non-private projects.
 - There is no password or test-only sign-in path; tests sign in with real magic links through Mailpit.
+- Sign-in mail goes only to plain addresses of at most 254 characters (`src/lib/email.ts`).
 - Agent tokens, device codes and claim links are stored only as SHA-256 hashes. The `/api/v1` routes take JSON bodies and bearer
   tokens, never cookies, so cross-site forms cannot reach them; the MCP endpoint rejects foreign `Origin` headers.
 - Webhook URLs are checked against private, loopback and link-local ranges when they are set and before every delivery, and

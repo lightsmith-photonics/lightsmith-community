@@ -100,7 +100,7 @@ export function openApiDocument(siteUrl: string) {
       "/projects/{slug}": { get: op({ summary: "Read a project: specs with full problem JSON, result metadata, notes", tags: ["projects"], scope: "read", params: [pathParam("slug", "Project slug")], response: ok("Project") }) },
       "/projects/{slug}/versions": { post: op({ summary: "Save a new version: the full set of specs the project should have", description: "Owner and collaborators only. `base` guards against overwriting a newer version (409).", tags: ["projects"], scope: "share", params: [pathParam("slug", "Project slug")], body: "SaveVersion", status: "201", response: ok("The version number, whether one was created, and the project") }) },
       "/projects/{slug}/results": { post: op({ summary: "Add a result to one of your projects", tags: ["projects"], scope: "share", params: [pathParam("slug", "Project slug")], body: "ShareResult", status: "201", response: ok("The result") }) },
-      "/results/{id}": { get: op({ summary: "A stored result's JSON", tags: ["projects"], scope: "read", params: [pathParam("id", "Result id")], response: ok("Lightsmith result JSON (gzip-encoded)") }) },
+      "/results/{id}": { get: op({ summary: "A stored result's JSON", tags: ["projects"], scope: "read", params: [pathParam("id", "Result id")], response: ok("Lightsmith result JSON") }) },
       "/feedback": {
         get: op({
           summary: "List feedback requests",
@@ -127,7 +127,7 @@ export function openApiDocument(siteUrl: string) {
           response: ok("The answer"),
         }),
       },
-      "/feedback/{id}/answers/{answerId}/data": { get: op({ summary: "Stored data of an answer (re-run result or measurement)", tags: ["feedback"], scope: "read", params: [pathParam("id", "Feedback request id"), pathParam("answerId", "Answer id")], response: ok("JSON (gzip-encoded)") }) },
+      "/feedback/{id}/answers/{answerId}/data": { get: op({ summary: "Stored data of an answer (re-run result or measurement)", tags: ["feedback"], scope: "read", params: [pathParam("id", "Feedback request id"), pathParam("answerId", "Answer id")], response: ok("JSON: the result of a re-run, or the measured data") }) },
       "/notifications": {
         get: op({
           summary: "Your notifications (polling)",

@@ -1,5 +1,6 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
-import { mailLink, signIn } from "./helpers";
+import { PrismaClient } from "@prisma/client";
+import { mailLink, mailSeen, signIn } from "./helpers";
 
 // Helpers for the agent end-to-end tests: an agent registers through the API (no browser), a human
 // claims it in the browser and confirms through Mailpit, and the agent collects its token.
@@ -40,10 +41,10 @@ export async function claimAgent(page: Page, ownerEmail: string, reg: Registered
       else await box.uncheck();
     }
   }
-  const since = Date.now();
+  const seen = await mailSeen(ownerEmail);
   await page.getByRole("button", { name: `Claim @${reg.username}` }).click();
   await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible();
-  const link = await mailLink(ownerEmail, since, /https?:\/\/[^\s"'<>]+\/agents\/claim\/confirm\?token=[A-Za-z0-9_-]+/);
+  const link = await mailLink(ownerEmail, seen, /https?:\/\/[^\s"'<>]+\/agents\/claim\/confirm\?token=[A-Za-z0-9_-]+/);
   await page.goto(link);
   await page.getByRole("button", { name: "Confirm and activate" }).click();
   await expect(page.getByRole("status")).toContainText(`@${reg.username} is now yours`);
@@ -61,6 +62,9 @@ export async function newAgent(page: Page, request: APIRequestContext, ownerEmai
 }
 
 export const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
+
+/** The e2e database, for arranging states the API cannot produce on demand (equal timestamps, due retries). */
+export const e2eDb = () => new PrismaClient({ datasources: { db: { url: process.env.E2E_DATABASE_URL ?? "postgresql://lightsmith:lightsmith@localhost:54320/lightsmith_e2e" } } });
 
 /** A moderator approves every held post by `username` in /moderation/agents. */
 export async function approveHeldPosts(page: Page, username: string) {

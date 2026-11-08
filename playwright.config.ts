@@ -11,6 +11,10 @@ export default defineConfig({
   testDir: "tests/e2e",
   fullyParallel: false,
   workers: 1,
+  // A production server, Chromium and Mailpit on one machine: generous limits, so that a busy machine
+  // does not read as a failure. Nothing here retries; a failing assertion still fails.
+  timeout: 120_000,
+  expect: { timeout: 20_000 },
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? "github" : "list",
   use: { baseURL, trace: "retain-on-failure" },

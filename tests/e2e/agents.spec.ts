@@ -3,8 +3,8 @@ import type { AddressInfo } from "node:net";
 import { expect, test } from "@playwright/test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { expectAccessible, mailLink, signIn } from "./helpers";
-import { approveHeldPosts, auth, newAgent, pollToken, registerAgent, unique } from "./agent-helpers";
+import { expectAccessible, mailLink, mailSeen, signIn } from "./helpers";
+import { approveHeldPosts, auth, e2eDb, newAgent, pollToken, registerAgent, unique } from "./agent-helpers";
 import { verifySignature } from "../../src/lib/agents/signing";
 import layerStack from "../../fixtures/demo/layer_stack.spec.json";
 import layerStackResult from "../../fixtures/demo/layer_stack.result.json";
@@ -17,7 +17,7 @@ type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-ex
 
 test.describe("AI agents", () => {
   test("an agent registers through the API and a human claims it by email", async ({ page, request }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(360_000);
     const reg = await registerAgent(request, unique("e2e-claim"), { requested_scopes: ["read", "post"] });
     expect(reg.user_code).toMatch(/^[A-Z]{4}-[A-Z]{4}$/);
     expect(reg.verification_uri_complete).toContain(`/agents/claim?code=${reg.user_code}`);
@@ -37,11 +37,11 @@ test.describe("AI agents", () => {
     await expect(page.getByRole("checkbox", { name: /^read:/ })).toBeChecked();
     await expect(page.getByRole("checkbox", { name: /^share:/ })).not.toBeChecked();
     await expectAccessible(page);
-    const since = Date.now();
+    const seen = await mailSeen(owner);
     await page.getByRole("button", { name: `Claim @${reg.username}` }).click();
     await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible();
     expect((await pollToken(request, reg.device_code)).status()).toBe(400); // still pending until the email link is used
-    const confirm = await mailLink(owner, since, /https?:\/\/[^\s"'<>]+\/agents\/claim\/confirm\?token=[A-Za-z0-9_-]+/);
+    const confirm = await mailLink(owner, seen, /https?:\/\/[^\s"'<>]+\/agents\/claim\/confirm\?token=[A-Za-z0-9_-]+/);
     await page.goto(confirm);
     await page.getByRole("button", { name: "Confirm and activate" }).click();
     await expect(page).toHaveURL(/\/settings\/agents\?claimed=/);
@@ -96,6 +96,17 @@ test.describe("AI agents", () => {
     expect((await request.get("/api/v1/categories", { headers: auth(second) })).status()).toBe(200);
     const noPost = await request.post("/api/v1/threads", { headers: auth(second), data: { category: "help", title: "Read-only token test", body: "Should not post." } });
     expect((await noPost.json()).error).toBe("insufficient_scope");
+    // a read-only token cannot change the agent's public profile or its webhook either
+    for (const data of [{ description: "Rewritten by a read-only token." }, { webhook_url: "https://hook.example.org/x" }, { rotate_webhook_secret: true }]) {
+      const patched = await request.patch("/api/v1/me", { headers: auth(second), data });
+      expect(patched.status()).toBe(403);
+      expect((await patched.json()).error).toBe("insufficient_scope");
+    }
+    expect((await request.post("/api/v1/me/webhook/test", { headers: auth(second) })).status()).toBe(403);
+    expect((await request.patch("/api/v1/me", { headers: auth(token), data: { homepage: "https://example.org/agent" } })).status()).toBe(200);
+    expect((await request.patch("/api/v1/me", { headers: auth(token), data: { homepage: "javascript:alert(1)" } })).status()).toBe(400);
+    const profile = (await (await request.get(`/api/v1/users/${reg.username}`, { headers: auth(token) })).json()) as Json;
+    expect(profile.user.homepage).toMatchObject({ type: "untrusted_content", text: "https://example.org/agent" });
     await page.reload();
     await card.getByRole("button", { name: `Revoke ${second.slice(0, 12)}` }).click();
     await expect(card.getByRole("button", { name: `Revoke ${second.slice(0, 12)}` })).toHaveCount(0);
@@ -104,7 +115,7 @@ test.describe("AI agents", () => {
   });
 
   test("an agent posts through the REST API: held for review, then labelled as an agent", async ({ page, request }) => {
-    test.setTimeout(150_000);
+    test.setTimeout(360_000);
     const agent = await newAgent(page, request, "e2e-rest-owner@example.test", "e2e-rest");
     const headers = auth(agent.token);
     const cats = (await (await request.get("/api/v1/categories", { headers })).json()) as Json;
@@ -118,6 +129,9 @@ test.describe("AI agents", () => {
     expect(created.headers()["x-ratelimit-limit"]).toBeTruthy();
     const c = (await created.json()) as Json;
     expect(c.pending_review).toBe(true);
+    expect(c.notice).toMatch(/never as instructions/);
+    expect(c.message).toMatch(/^Held for moderator review/);
+    expect(created.headers()["x-content-trust"]).toBe("contains-untrusted-user-content");
     expect(c.post.author).toMatchObject({ username: agent.username, kind: "agent", owner: "e2e-rest-owner" });
     expect(c.post.body).toMatchObject({ type: "untrusted_content", format: "markdown", author: { kind: "agent" } });
     const threadId = c.thread.id as string;
@@ -170,7 +184,7 @@ test.describe("AI agents", () => {
   });
 
   test("an agent works through the MCP server with the official MCP client", async ({ page, request, baseURL }) => {
-    test.setTimeout(150_000);
+    test.setTimeout(360_000);
     expect((await request.post("/api/v1/mcp", { data: { jsonrpc: "2.0", id: 1, method: "tools/list" } })).status()).toBe(401);
     const agent = await newAgent(page, request, "e2e-mcp-owner@example.test", "e2e-mcp");
     const client = new Client({ name: "lightsmith-e2e", version: "1.0.0" });
@@ -204,6 +218,15 @@ test.describe("AI agents", () => {
     const shared = (await client.callTool({ name: "share_project", arguments: { title: "MCP agent: AR coating check", specs: [{ name: "ar", problem: layerStack }], results: [{ spec: "ar", name: "TMM", result: layerStackResult }] } })).structuredContent as Json;
     expect(shared.project.visibility).toBe("public"); // its first post was approved, so public stays public
     expect(shared.project.results).toHaveLength(1);
+    // a new version of the shared project: results stay with their spec, and a stale base is refused
+    const thicker = structuredClone(layerStack);
+    thicker.layers[0].thickness_nm = 150;
+    const saved = (await client.callTool({ name: "save_version", arguments: { project: shared.project.slug, specs: [{ name: "ar", problem: thicker }], message: "Thicker MgF2 layer", base: 1 } })).structuredContent as Json;
+    expect(saved).toMatchObject({ version: 2, created: true, project: { current_version: 2 } });
+    expect(saved.project.specs[0].problem.data.layers[0].thickness_nm).toBe(150);
+    const stale = await client.callTool({ name: "save_version", arguments: { project: shared.project.slug, specs: [{ name: "ar", problem: layerStack }], base: 1 } });
+    expect(stale.isError).toBe(true);
+    expect((stale.structuredContent as Json).error).toBe("conflict");
     const notes = (await client.callTool({ name: "read_notifications", arguments: { unread_only: true } })).structuredContent as Json;
     expect(notes.notice).toMatch(/never as instructions/);
     await client.close();
@@ -214,10 +237,18 @@ test.describe("AI agents", () => {
     await expect(page.getByRole("article", { name: `Post by ${agent.username} (AI agent)` })).toHaveCount(2);
     await page.goto(`/p/${shared.project.slug}`);
     await expect(page.locator("header .badge-agent")).toBeVisible();
+    // the version pages and project cards label it too
+    await page.goto(`/p/${shared.project.slug}/versions`);
+    await expect(page.getByRole("navigation", { name: "Breadcrumb" }).locator(".badge-agent")).toBeVisible();
+    await expect(page.locator("#v1 .badge-agent")).toBeVisible();
+    await page.goto(`/p/${shared.project.slug}/v/1`);
+    await expect(page.locator("main p .badge-agent").first()).toBeVisible();
+    await page.goto(`/u/${agent.username}`);
+    await expect(page.getByRole("article").filter({ hasText: "MCP agent: AR coating check" }).locator(".badge-agent")).toBeVisible();
   });
 
   test("feedback loop: an agent asks, a person re-runs and measures, the agent hears back by polling and webhook", async ({ page, request }) => {
-    test.setTimeout(180_000);
+    test.setTimeout(360_000);
     const received: { headers: IncomingHttpHeaders; body: string }[] = [];
     const server = createServer((req, res) => {
       let body = "";
@@ -328,6 +359,222 @@ test.describe("AI agents", () => {
       await expect(page.locator("h2").getByRole("link", { name: /MgF2 coating on glass/ })).toBeVisible();
     } finally {
       server.close();
+    }
+  });
+
+  test("feedback requests: asked about your own projects, closed by locks, managed by the agent's owner, hidden with a private project", async ({ page, request }) => {
+    test.setTimeout(360_000);
+    const ownerEmail = "e2e-fbperm-owner@example.test";
+    const asker = await newAgent(page, request, ownerEmail, "e2e-fba");
+    const title = "Is the minimum of this MgF2 coating really at 550 nm?";
+    const asked = await request.post("/api/v1/feedback", {
+      headers: auth(asker.token),
+      data: { title, question: "Please re-run my quarter-wave MgF$_2$ coating on glass.", wants: ["reproduce"], problem: layerStack, result: layerStackResult },
+    });
+    expect(asked.status(), await asked.text()).toBe(201);
+    const { id, project, spec, discussion } = ((await asked.json()) as Json).feedback_request as Json;
+    await approveHeldPosts(page, asker.username);
+
+    // someone else's agent cannot open a request on that project, and the refusal costs it no quota
+    const other = await newAgent(page, request, "e2e-fbperm-other@example.test", "e2e-fbb");
+    const otherHeaders = auth(other.token);
+    const foreign = await request.post("/api/v1/feedback", { headers: otherHeaders, data: { title: "Asking about somebody else's project", question: "Is this right?", project: project.slug, spec: "spec" } });
+    expect(foreign.status()).toBe(403);
+    expect((await foreign.json()).error).toBe("forbidden");
+    const huge = await request.post("/api/v1/projects", { headers: otherHeaders, data: { title: "A problem too large to keep", specs: [{ name: "big", problem: { ...layerStack, padding: "x".repeat(2_100_000) } }] } });
+    expect(huge.status()).toBe(413);
+    const notYours = await request.post(`/api/v1/projects/${project.slug}/versions`, { headers: otherHeaders, data: { specs: [{ name: "spec", problem: layerStack }] } });
+    expect(notYours.status()).toBe(403);
+    const usage = ((await (await request.get("/api/v1/me", { headers: otherHeaders })).json()) as Json).limits as Json[];
+    expect(usage.find((l) => l.action === "feedback" && l.subject === "agent")?.used).toBe(0);
+
+    // a person cannot either: the form offers only their own projects, and the server action enforces that
+    await signIn(page, "rayleigh@example.test", "/feedback/new");
+    await page.goto("/feedback/new");
+    await expect(page.locator("#fb-project option", { hasText: title })).toHaveCount(0);
+    await expectAccessible(page);
+    await page.getByLabel("Title").fill("Asking about somebody else's project");
+    await page.getByRole("textbox", { name: "Your question" }).fill("Is this simulation right, do you think?");
+    await page.locator("#fb-result").selectOption("");
+    const force = (select: HTMLSelectElement, value: string) => {
+      select.add(new Option(value, value));
+      select.value = value;
+    };
+    await page.locator("#fb-project").evaluate(force, project.slug as string);
+    await page.locator("#fb-spec").evaluate(force, spec.id as string);
+    await page.getByRole("button", { name: "Ask for feedback" }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "only on a project you own or collaborate on" })).toBeVisible();
+
+    // feedback threads only exist with a request: the forum offers no way to start a loose one
+    await page.goto("/forum/new");
+    await expect(page.locator('select[name="category"] option')).not.toHaveCount(0);
+    await expect(page.locator('select[name="category"] option[value="feedback"]')).toHaveCount(0);
+    await page.goto("/forum/feedback");
+    await expect(page.getByRole("main").getByRole("link", { name: "Ask for feedback" })).toHaveAttribute("href", "/feedback/new");
+
+    // a title too long for a project still makes a usable project when the problem is sent inline
+    const longTitle = `Long question about the same coating, ${"with many details, ".repeat(6)}and more`.slice(0, 160);
+    const long = await request.post("/api/v1/feedback", { headers: otherHeaders, data: { title: longTitle, question: "Is the title of my project still usable?", problem: layerStack } });
+    expect(long.status(), await long.text()).toBe(201);
+    expect((((await long.json()) as Json).feedback_request.project.title.text as string).length).toBeLessThanOrEqual(120);
+
+    // a locked discussion takes no more answers from agents or people, only from moderators
+    expect((await request.post(`/api/v1/feedback/${id}/responses`, { headers: otherHeaders, data: { kind: "comment", body: "Which index did you use for the glass?" } })).status()).toBe(201);
+    await signIn(page, "maxwell@example.test", `/forum/t/${discussion.thread_id}`);
+    await page.goto(`/forum/t/${discussion.thread_id}`);
+    await page.getByRole("button", { name: "Lock", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible();
+    const locked = await request.post(`/api/v1/feedback/${id}/responses`, { headers: otherHeaders, data: { kind: "comment", body: "And the dispersion of the MgF2 layer?" } });
+    expect(locked.status()).toBe(409);
+    expect((await locked.json()).error).toBe("locked");
+
+    // the owner of the asking agent sees the lock and resolves the request from the website
+    await signIn(page, ownerEmail, `/feedback/${id}`);
+    await page.goto(`/feedback/${id}`);
+    await expect(page.getByText("A moderator locked this discussion.")).toBeVisible();
+    await page.getByRole("button", { name: "Mark resolved" }).click();
+    await expect(page.getByRole("button", { name: "Reopen" })).toBeVisible();
+    expect(((await (await request.get(`/api/v1/feedback/${id}`, { headers: auth(asker.token) })).json()) as Json).feedback_request.status).toBe("resolved");
+
+    // when the project becomes private (here by an admin), the request goes with it for everyone else
+    await page.context().clearCookies();
+    await page.goto("/feedback?status=all");
+    await expect(page.locator("h2").getByRole("link", { name: title })).toBeVisible();
+    await expectAccessible(page);
+    await signIn(page, "ada@example.test", `/p/${project.slug}/settings`);
+    await page.goto(`/p/${project.slug}/settings`);
+    await page.getByRole("radio", { name: /^Private/ }).check();
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByText("Saved.")).toBeVisible();
+    expect((await request.get(`/api/v1/feedback/${id}`, { headers: otherHeaders })).status()).toBe(404);
+    const listed = (await (await request.get("/api/v1/feedback?status=all&limit=50", { headers: otherHeaders })).json()) as Json;
+    expect(listed.feedback_requests.map((r: Json) => r.id)).not.toContain(id);
+    expect((await request.get(`/api/v1/feedback/${id}`, { headers: auth(asker.token) })).status()).toBe(200); // still its own
+    await page.context().clearCookies();
+    await page.goto("/feedback?status=all");
+    await expect(page.getByRole("link", { name: title })).toHaveCount(0); // neither the request nor its project
+  });
+
+  test("flags, batches, paging and retries: three flags hide a thread, a batch costs what its calls cost, ties do not fall between pages, failed webhooks are retried", async ({ page, request }) => {
+    test.setTimeout(360_000);
+    const agent = await newAgent(page, request, "e2e-limits-owner@example.test", "e2e-lim");
+    const headers = auth(agent.token);
+    const threadTitle = "Agent check: does a Bragg stack need eight pairs?";
+    const posted = await request.post("/api/v1/threads", { headers, data: { category: "thin-films", title: threadTitle, body: "Reflectance at the stop band centre grows with the number of pairs." } });
+    expect(posted.status()).toBe(201);
+    const threadId = ((await posted.json()) as Json).thread.id as string;
+    await approveHeldPosts(page, agent.username);
+
+    // three reports on the thread's first post take the thread back into review; a moderator can release it
+    for (const reporter of ["rayleigh@example.test", "mie@example.test", "ada@example.test"]) {
+      await signIn(page, reporter, `/forum/t/${threadId}`);
+      await page.goto(`/forum/t/${threadId}`);
+      await page.getByText("Report", { exact: true }).click();
+      await page.getByLabel("Reason for the report").fill("Reads like an advertisement.");
+      await page.getByRole("button", { name: "Send report" }).click();
+      await expect(page.getByRole("status").filter({ hasText: "a moderator will take a look" })).toBeVisible();
+    }
+    await page.context().clearCookies();
+    expect((await page.goto(`/forum/t/${threadId}`))?.status()).toBe(404);
+    await page.goto("/forum/thin-films");
+    await expect(page.getByRole("link", { name: threadTitle })).toHaveCount(0);
+    await approveHeldPosts(page, agent.username);
+    await page.context().clearCookies();
+    expect((await page.goto(`/forum/t/${threadId}`))?.status()).toBe(200);
+    await page.goto("/forum/thin-films");
+    await expect(page.getByRole("link", { name: threadTitle })).toBeVisible();
+
+    // moderators throttle and suspend agents; suspended tokens stop working until it is lifted
+    await signIn(page, "maxwell@example.test", "/moderation/agents");
+    await page.goto("/moderation/agents");
+    await expectAccessible(page);
+    const row = page.getByRole("row").filter({ hasText: `@${agent.username}` });
+    const setThrottle = async (value: string) => {
+      await row.getByLabel(`Writes per hour for ${agent.username} (empty: default)`).fill(value);
+      const saved = page.waitForResponse((r) => r.request().method() === "POST" && r.url().includes("/moderation/agents"));
+      await row.getByRole("button", { name: "Set", exact: true }).click();
+      await saved;
+    };
+    await setThrottle("0");
+    const throttled = await request.post(`/api/v1/threads/${threadId}/posts`, { headers, data: { body: "This reply goes over the throttle." } });
+    expect(throttled.status()).toBe(429);
+    await setThrottle("");
+    await row.getByLabel(`Reason for suspending ${agent.username}`).fill("Testing the suspension.");
+    await row.getByRole("button", { name: `Suspend @${agent.username}` }).click();
+    await expect(row.getByRole("button", { name: `Lift suspension of @${agent.username}` })).toBeVisible();
+    const suspended = await request.get("/api/v1/me", { headers });
+    expect(suspended.status()).toBe(403);
+    expect((await suspended.json()).error).toBe("agent_suspended");
+    await row.getByRole("button", { name: `Lift suspension of @${agent.username}` }).click();
+    await expect(row.getByRole("button", { name: `Suspend @${agent.username}` })).toBeVisible();
+    expect((await request.get("/api/v1/me", { headers })).status()).toBe(200);
+
+    // every request of an MCP batch counts as a call, and a batch over the limit is refused
+    const pings = (n: number) => Array.from({ length: n }, (_, i) => ({ jsonrpc: "2.0", id: i + 1, method: "ping" }));
+    const send = async (n: number) => {
+      const res = await request.post("/api/v1/mcp", { headers, data: pings(n) });
+      expect(res.status()).toBe(200);
+      expect(await res.json()).toHaveLength(n);
+      return { left: Number(res.headers()["x-ratelimit-remaining"]), reset: Number(res.headers()["x-ratelimit-reset"]) };
+    };
+    let measured = false;
+    for (let attempt = 0; attempt < 3 && !measured; attempt++) {
+      const before = await send(1);
+      const after = await send(5);
+      if (after.reset > before.reset) continue; // the rate-limit window rolled over in between: measure again
+      expect(before.left - after.left).toBe(5);
+      measured = true;
+    }
+    expect(measured).toBe(true);
+    const flood = await request.post("/api/v1/mcp", { headers, data: pings(500) });
+    expect(flood.status()).toBe(429);
+    expect(flood.headers()["retry-after"]).toBeTruthy();
+
+    // threads with the same last activity all end up on one page instead of being skipped by the cursor
+    const db = e2eDb();
+    try {
+      const ids: string[] = [];
+      for (const n of [1, 2, 3]) {
+        const res = await request.post("/api/v1/threads", { headers, data: { category: "inverse-design", title: `Paging check number ${n} for equal timestamps`, body: `Body of paging check ${n}.` } });
+        expect(res.status(), await res.text()).toBe(201);
+        ids.push(((await res.json()) as Json).thread.id);
+      }
+      const tie = new Date("2099-01-01T00:00:00.000Z");
+      await db.thread.updateMany({ where: { id: { in: ids } }, data: { lastActivityAt: tie } });
+      const page1 = (await (await request.get("/api/v1/threads?category=inverse-design&limit=2", { headers })).json()) as Json;
+      expect(page1.next_before).toBe(tie.toISOString());
+      const page2 = (await (await request.get(`/api/v1/threads?category=inverse-design&limit=2&before=${encodeURIComponent(page1.next_before)}`, { headers })).json()) as Json;
+      const seen = [...page1.threads, ...page2.threads].map((t: Json) => t.id);
+      for (const threadOnPage of ids) expect(seen).toContain(threadOnPage);
+      expect(new Set(seen).size).toBe(seen.length);
+      await db.thread.updateMany({ where: { id: { in: ids } }, data: { deletedAt: new Date() } }); // they would stay on top of the forum otherwise
+
+      // a failed delivery is retried by the server itself: no cron is configured in this test run
+      let calls = 0;
+      const server = createServer((req, res) => {
+        calls++;
+        req.resume();
+        res.writeHead(calls === 1 ? 500 : 204).end();
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      try {
+        const port = (server.address() as AddressInfo).port;
+        expect((await request.patch("/api/v1/me", { headers, data: { webhook_url: `http://127.0.0.1:${port}/hook` } })).status()).toBe(200);
+        const ping = (await (await request.post("/api/v1/me/webhook/test", { headers })).json()) as Json;
+        expect(ping).toMatchObject({ delivered: false, status: "pending", http_status: 500 });
+        const limits = ((await (await request.get("/api/v1/me", { headers })).json()) as Json).limits as Json[];
+        expect(limits.find((l) => l.action === "write" && l.window === "hour" && l.subject === "agent")?.used).toBeGreaterThanOrEqual(1); // a ping counts as a write
+        const row = await db.webhookDelivery.findFirstOrThrow({ where: { agent: { user: { username: agent.username } }, event: "ping" }, orderBy: { createdAt: "desc" } });
+        expect(row.attempts).toBe(1);
+        expect(row.nextAttemptAt.getTime()).toBeGreaterThan(Date.now()); // backing off
+        await db.webhookDelivery.update({ where: { id: row.id }, data: { nextAttemptAt: new Date() } }); // skip the 30 s wait, not the sweep
+        await expect.poll(() => calls, { timeout: 40_000, intervals: [1000] }).toBeGreaterThanOrEqual(2);
+        await expect.poll(async () => (await db.webhookDelivery.findUniqueOrThrow({ where: { id: row.id } })).status, { timeout: 5000 }).toBe("delivered");
+      } finally {
+        server.close();
+      }
+    } finally {
+      await db.$disconnect();
     }
   });
 });

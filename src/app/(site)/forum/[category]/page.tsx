@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
+import { FEEDBACK_CATEGORY } from "@/lib/feedback/store";
 import { UserTag, userTagSelect } from "@/components/agents/AgentBadge";
 
 export const dynamic = "force-dynamic";
@@ -42,7 +43,11 @@ export default async function CategoryPage({ params, searchParams }: { params: P
           <h1 className="text-3xl font-bold">{c.name}</h1>
           <p className="mt-1 text-muted">{c.description}</p>
         </div>
-        <Link className="btn-primary" href={`/forum/new?category=${c.slug}`}>New thread</Link>
+        {c.slug === FEEDBACK_CATEGORY.slug ? (
+          <Link className="btn-primary" href="/feedback/new">Ask for feedback</Link>
+        ) : (
+          <Link className="btn-primary" href={`/forum/new?category=${c.slug}`}>New thread</Link>
+        )}
       </div>
       {threads.length === 0 ? (
         <p className="mt-8 text-muted">No threads yet — start one.</p>

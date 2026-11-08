@@ -68,8 +68,12 @@ const fields = (fd: FormData, prefix: string, keys: string[]) => Object.fromEntr
 export async function answerFeedbackAction(requestId: string, _: FeedbackState, fd: FormData): Promise<FeedbackState> {
   const me = await getCurrentUser();
   if (!me) return { ok: false, message: "Sign in to answer." };
-  const request = await db.feedbackRequest.findUnique({ where: { id: requestId }, include: { thread: true, author: { select: { agentProfile: { select: { ownerId: true } } } } } });
-  if (!request || request.thread.deletedAt || (request.thread.pendingReview && !hasRole(me.role, "moderator"))) return { ok: false, message: "No such feedback request." };
+  const request = await db.feedbackRequest.findUnique({
+    where: { id: requestId },
+    include: { thread: true, author: { select: { agentProfile: { select: { ownerId: true } } } }, project: { select: { visibility: true, ownerId: true, collaborators: { select: { userId: true } } } } },
+  });
+  const isMod = hasRole(me.role, "moderator");
+  if (!request || request.thread.deletedAt || (request.thread.pendingReview && !isMod) || !canViewProject(request.project, me)) return { ok: false, message: "No such feedback request." };
   const body = z.string().trim().min(2, "Write a short explanation").max(20_000).safeParse(fd.get("body"));
   if (!body.success) return { ok: false, message: body.error.issues[0].message };
   const kind = String(fd.get("kind") ?? "comment");
@@ -93,7 +97,7 @@ export async function answerFeedbackAction(requestId: string, _: FeedbackState, 
     };
   } else answer = { kind: "comment" };
   try {
-    await answerFeedback({ author: { ...me, ownerId: null }, request, requesterOwnerId: request.author.agentProfile?.ownerId ?? null, body: body.data, answer, via: "web", hold: false });
+    await answerFeedback({ author: { ...me, ownerId: null }, request, requesterOwnerId: request.author.agentProfile?.ownerId ?? null, body: body.data, answer, via: "web", hold: false, bypassLock: isMod });
   } catch (err) {
     if (err instanceof ApiError) {
       const issues = (err.extra?.issues as { path: string; message: string }[] | undefined)?.slice(0, 3).map((i) => `${i.path}: ${i.message}`).join("; ");
@@ -105,10 +109,12 @@ export async function answerFeedbackAction(requestId: string, _: FeedbackState, 
   return { ok: true, message: kind === "comment" ? "Comment posted." : "Thanks — your answer is attached to the request." };
 }
 
+/** The requester, the owner of a requesting agent, or a moderator resolves, closes or reopens a request. */
 export async function setFeedbackStatus(requestId: string, status: "open" | "resolved" | "closed") {
   const me = await requireUser(`/feedback/${requestId}`);
-  const r = await db.feedbackRequest.findUnique({ where: { id: requestId } });
-  if (!r || (r.authorId !== me.id && !hasRole(me.role, "moderator"))) return;
+  const r = await db.feedbackRequest.findUnique({ where: { id: requestId }, include: { author: { select: { agentProfile: { select: { ownerId: true } } } } } });
+  const operatesRequester = Boolean(r?.author.agentProfile?.ownerId && r.author.agentProfile.ownerId === me.id);
+  if (!r || (r.authorId !== me.id && !operatesRequester && !hasRole(me.role, "moderator"))) return;
   await db.feedbackRequest.update({ where: { id: requestId }, data: { status, resolvedAt: status === "open" ? null : new Date() } });
   revalidatePath(`/feedback/${requestId}`);
   revalidatePath("/feedback");

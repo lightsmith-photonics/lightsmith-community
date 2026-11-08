@@ -6,6 +6,13 @@ import { summarizeSpec, type Simulation } from "./spec";
 // envelope printed by the library's `schema` command). Validation picks the branch by `kind`
 // so error messages refer to that kind only. Specs without `kind` are scattering (v0.1).
 
+/** Problem JSON is stored in the database (results go to object storage), so it has one limit on every way in. */
+export const MAX_PROBLEM_CHARS = 2_000_000;
+
+export function problemTooLarge(problem: unknown): boolean {
+  return (typeof problem === "string" ? problem : (JSON.stringify(problem) ?? "")).length > MAX_PROBLEM_CHARS;
+}
+
 export const PROBLEM_KINDS = ["scattering", "layer_stack", "periodic", "mode", "device", "bands", "circuit", "optimization"] as const;
 export type ProblemKind = (typeof PROBLEM_KINDS)[number];
 

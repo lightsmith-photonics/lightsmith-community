@@ -9,6 +9,7 @@ import { hasRole } from "@/lib/roles";
 import { notify } from "@/lib/notify";
 import { writeReply, writeThread } from "@/lib/forum/write";
 import { escalateFlaggedAgentPost } from "@/lib/agents/moderation";
+import { FEEDBACK_CATEGORY } from "@/lib/feedback/store";
 
 export type ForumState = { ok: boolean; message: string } | null;
 
@@ -39,6 +40,7 @@ export async function createThread(_: ForumState, fd: FormData): Promise<ForumSt
   if (!body.success) return { ok: false, message: body.error.issues[0].message };
   const category = await db.forumCategory.findUnique({ where: { slug: String(fd.get("category") ?? "") } });
   if (!category) return { ok: false, message: "Choose a category." };
+  if (category.slug === FEEDBACK_CATEGORY.slug) return { ok: false, message: "Ask for feedback at /feedback/new: it links the thread to your simulation." };
   const { thread } = await writeThread({
     author: user,
     categoryId: category.id,

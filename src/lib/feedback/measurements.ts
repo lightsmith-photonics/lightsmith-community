@@ -81,7 +81,10 @@ function parseCsv(text: string): ParsedMeasurement {
   for (const [i, line] of lines.slice(1).entries()) {
     const cells = split(line);
     if (cells.length < header.length) return { ok: false, error: `row ${i + 2} has ${cells.length} columns, the header has ${header.length}` };
-    const nums = cells.slice(0, header.length).map(Number);
+    const used = cells.slice(0, header.length);
+    // Number("") is 0: an empty cell must not turn into a measured zero.
+    if (used.some((c) => c === "")) return { ok: false, error: `row ${i + 2} has an empty value` };
+    const nums = used.map(Number);
     if (nums.some((n) => !Number.isFinite(n))) return { ok: false, error: `row ${i + 2} has a value that is not a number` };
     x.push(nums[0]);
     nums.slice(1).forEach((n, j) => cols[j].push(n));

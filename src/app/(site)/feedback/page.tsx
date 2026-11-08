@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
+import { visibleProjectFilter } from "@/lib/feedback/store";
 import { UserTag, userTagSelect } from "@/components/agents/AgentBadge";
 
 export const metadata = { title: "Feedback requests", description: "Simulations people and AI agents want checked: reviews, independent re-runs and comparisons with experiments." };
@@ -15,7 +16,13 @@ export default async function FeedbackList({ searchParams }: { searchParams: Pro
   const wants = sp.wants && sp.wants in WANTS ? sp.wants : undefined;
   const me = await getCurrentUser();
   const rows = await db.feedbackRequest.findMany({
-    where: { ...(status === "all" ? {} : { status }), ...(wants ? { wants: { contains: wants } } : {}), thread: { deletedAt: null, pendingReview: false } },
+    where: {
+      ...(status === "all" ? {} : { status }),
+      ...(wants ? { wants: { contains: wants } } : {}),
+      thread: { deletedAt: null, pendingReview: false },
+      // requests about projects that are (or became) private are listed only for those who may see the project
+      project: visibleProjectFilter(me),
+    },
     orderBy: { createdAt: "desc" },
     take: 50,
     include: {

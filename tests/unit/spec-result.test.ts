@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { KIND_LABELS, SCHEMA_VERSION, expandWavelengths, summarizeProblem, validateProblem } from "@/lib/problem/problem";
+import { KIND_LABELS, MAX_PROBLEM_CHARS, SCHEMA_VERSION, expandWavelengths, problemTooLarge, summarizeProblem, validateProblem } from "@/lib/problem/problem";
 import { equivalentRadius, summarizeSpec } from "@/lib/problem/spec";
 import { efficiencies, makePreview, modeIntensity, parseResult, summarizeResult, type ModesResult } from "@/lib/problem/result";
 import { bandGaps } from "@/components/charts/BandsView";
@@ -68,6 +68,16 @@ describe("scattering helpers", () => {
   });
 });
 
+describe("problem size limit", () => {
+  it("applies to objects and to JSON text alike", () => {
+    expect(problemTooLarge({ kind: "layer_stack" })).toBe(false);
+    expect(problemTooLarge({ kind: "layer_stack", padding: "x".repeat(MAX_PROBLEM_CHARS) })).toBe(true);
+    expect(problemTooLarge("x".repeat(MAX_PROBLEM_CHARS))).toBe(false);
+    expect(problemTooLarge("x".repeat(MAX_PROBLEM_CHARS + 1))).toBe(true);
+    expect(problemTooLarge(undefined)).toBe(false);
+  });
+});
+
 describe("parseResult", () => {
   it.each(demos)("parses the %s demo result and builds a preview", (name) => {
     const p = parseResult(load(name, "result"));
@@ -85,7 +95,9 @@ describe("parseResult", () => {
   it("computes efficiencies and keeps unknown keys", () => {
     const p = parseResult(load("scattering", "result"));
     expect(p.ok).toBe(true);
-    if (!p.ok || p.result.kind !== "cross_sections") return;
+    if (!p.ok) return;
+    expect(p.result.kind).toBe("cross_sections");
+    if (p.result.kind !== "cross_sections") return;
     const raw = JSON.parse(load("scattering", "result"));
     expect(efficiencies(p.result).q_ext[0]).toBeCloseTo(raw.c_ext_nm2[0] / (Math.PI * 40 * 40));
   });

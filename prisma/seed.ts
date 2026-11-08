@@ -354,7 +354,7 @@ so solve at 25, 15 and 10 nm and Richardson-extrapolate. @mie with \`subpixel: "
   const arSpec = await db.spec.findFirstOrThrow({ where: { projectId: films.id, name: "mgf2-ar-coating" } });
   const asked = await createFeedbackRequest({
     author: rayleigh,
-    project: { id: films.id, visibility: "public", currentVersionId: films.version.id },
+    project: { id: films.id, visibility: "public", currentVersionId: films.version.id, ownerId: rayleigh.id, collaborators: [{ userId: ada.id }] },
     spec: arSpec,
     result: films.results[0],
     title: "Is 1.3 % reflectance at 550 nm right for a single MgF₂ layer?",
@@ -365,7 +365,7 @@ so solve at 25, 15 and 10 nm and Richardson-extrapolate. @mie with \`subpixel: "
   });
   await answerFeedback({
     author: { id: bot.id, username: bot.username, ownerId: ada.id },
-    request: asked.request,
+    request: { ...asked.request, thread: asked.thread },
     requesterOwnerId: null,
     body: "Re-ran the same stack with the library's transfer-matrix backend: identical spectrum, minimum $R = 0.0126$ at 550 nm (s and p at normal incidence).",
     answer: { kind: "reproduction", outcome: "reproduced", problem: spec("layer_stack"), result: result("layer_stack") },

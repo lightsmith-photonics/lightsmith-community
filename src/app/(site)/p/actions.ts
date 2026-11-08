@@ -7,7 +7,7 @@ import { db } from "@/lib/db";
 import { getCurrentUser, requireUser } from "@/lib/session";
 import { asVisibility, canContribute, canEditProject, canViewProject } from "@/lib/roles";
 import { uniqueSlug } from "@/lib/slug";
-import { validateProblem } from "@/lib/problem/problem";
+import { MAX_PROBLEM_CHARS, validateProblem } from "@/lib/problem/problem";
 import { parseResult } from "@/lib/problem/result";
 import { parseTags } from "@/lib/projects";
 import { deleteStoredResults, deleteUnreferencedResults, saveResult } from "@/lib/results-store";
@@ -16,7 +16,7 @@ import { notify } from "@/lib/notify";
 
 export type FormState = { ok: boolean; message: string } | null;
 
-const MAX_SPEC = 2_000_000;
+const MAX_SPEC = MAX_PROBLEM_CHARS;
 const MAX_RESULT = 50_000_000;
 
 const ProjectInput = z.object({

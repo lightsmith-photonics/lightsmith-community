@@ -215,6 +215,8 @@ export default async function FeedbackPage({ params }: { params: Promise<{ id: s
           </p>
         ) : r.status !== "open" ? (
           <p className="card mt-3 text-sm text-muted">This request is {r.status}.</p>
+        ) : r.thread.locked && !isMod ? (
+          <p className="card mt-3 text-sm text-muted">A moderator locked this discussion.</p>
         ) : (
           <div className="mt-3">
             <AnswerForms action={answerFeedbackAction.bind(null, r.id)} independent={!isRequester && !operatesRequester} />

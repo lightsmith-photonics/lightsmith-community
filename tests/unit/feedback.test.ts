@@ -3,10 +3,39 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { measurementPreview, parseMeasurement } from "@/lib/feedback/measurements";
 import { compareCurve, compareMeasurement, compareRerun, interpolate, symbolOf } from "@/lib/feedback/compare";
-import { cleanMetadata, parseWants } from "@/lib/feedback/store";
+import { assertCanAskAbout, cleanMetadata, parseWants, visibleProjectFilter } from "@/lib/feedback/store";
+import type { ApiError } from "@/lib/api/errors";
 import { makePreview, parseResult } from "@/lib/problem/result";
 
 const demo = (name: string) => readFileSync(join(__dirname, "..", "..", "fixtures", "demo", name), "utf8");
+
+describe("who may ask about a project and who sees the request", () => {
+  const project = { visibility: "public", ownerId: "owner", collaborators: [{ userId: "collab" }] };
+  const user = (id: string, role = "user") => ({ id, role });
+  const code = (fn: () => void) => {
+    try {
+      fn();
+    } catch (e) {
+      return (e as ApiError).code;
+    }
+    return "allowed";
+  };
+
+  it("only owners, collaborators and admins can ask, and never about a private project", () => {
+    expect(code(() => assertCanAskAbout(project, user("owner")))).toBe("allowed");
+    expect(code(() => assertCanAskAbout(project, user("collab")))).toBe("allowed");
+    expect(code(() => assertCanAskAbout(project, user("admin", "admin")))).toBe("allowed");
+    expect(code(() => assertCanAskAbout(project, user("stranger")))).toBe("forbidden");
+    expect(code(() => assertCanAskAbout(project, user("moderator", "moderator")))).toBe("forbidden");
+    expect(code(() => assertCanAskAbout({ ...project, visibility: "private" }, user("owner")))).toBe("private_project");
+  });
+
+  it("lists requests by the rule of canViewProject", () => {
+    expect(visibleProjectFilter(null)).toEqual({ OR: [{ visibility: { not: "private" } }] });
+    expect(visibleProjectFilter(user("u1"))).toEqual({ OR: [{ visibility: { not: "private" } }, { ownerId: "u1" }, { collaborators: { some: { userId: "u1" } } }] });
+    expect(visibleProjectFilter(user("root", "admin"))).toEqual({});
+  });
+});
 
 describe("measured data", () => {
   it("parses CSV with comments and a unit in the header", () => {
@@ -40,6 +69,11 @@ describe("measured data", () => {
     expect(parseMeasurement("400,0.1\n500,0.2\n600,0.3")).toMatchObject({ ok: false, error: expect.stringMatching(/header/) });
     expect(parseMeasurement("wavelength_nm,R\n400,abc\n500,0.2")).toMatchObject({ ok: false, error: expect.stringMatching(/row 2/) });
     expect(parseMeasurement("wavelength_nm,R\n-1,0.1\n500,0.2")).toMatchObject({ ok: false });
+  });
+
+  it("refuses empty cells instead of reading them as zero", () => {
+    const m = parseMeasurement("wavelength_nm,R,T\n400,0.04,0.95\n500,,0.97\n600,0.03,0.96\n");
+    expect(m).toEqual({ ok: false, error: "row 3 has an empty value" });
   });
 
   it("thins long data for previews", () => {

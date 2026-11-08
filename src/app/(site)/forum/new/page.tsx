@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { FEEDBACK_CATEGORY } from "@/lib/feedback/store";
 import { requireUser } from "@/lib/session";
 import { attachmentOptions } from "@/lib/forum/attachments";
 import { NewThreadForm } from "@/components/forum/PostComposer";
@@ -10,7 +11,7 @@ export default async function NewThread({ searchParams }: { searchParams: Promis
   const sp = await searchParams;
   const me = await requireUser(`/forum/new${sp.category ? `?category=${sp.category}` : ""}`);
   const [categories, attachments] = await Promise.all([
-    db.forumCategory.findMany({ orderBy: { position: "asc" }, select: { slug: true, name: true } }),
+    db.forumCategory.findMany({ where: { slug: { not: FEEDBACK_CATEGORY.slug } }, orderBy: { position: "asc" }, select: { slug: true, name: true } }),
     attachmentOptions(me.id),
   ]);
   return (

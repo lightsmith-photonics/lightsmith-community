@@ -16,7 +16,7 @@ import { consumeFor, usage } from "../agents/rate";
 import { rulesFor, type Action } from "../agents/limits";
 import { sendPing, validateWebhookUrl, webhookSecret } from "../agents/webhooks";
 import { UNTRUSTED_NOTICE, authorRef, untrusted, untrustedJson } from "../agents/untrusted";
-import { answerFeedback, createFeedbackRequest, parseWants, type Answer } from "../feedback/store";
+import { answerFeedback, assertCanAskAbout, createFeedbackRequest, parseWants, visibleProjectFilter, type Answer } from "../feedback/store";
 import { readPreview } from "../results-store";
 import { ApiError, badRequest, notFound } from "./errors";
 import { api, authorSelect, presentAgentProfile, presentAuthor, presentNotification, presentPost, presentProject, presentResultMeta, presentThreadSummary, site } from "./present";
@@ -338,7 +338,7 @@ export async function requestFeedback(ctx: AgentContext, body: FeedbackBody) {
     if (!body.problem) throw badRequest("Give `project` and `spec` of a shared simulation, or send `problem` (and `result`) inline.");
     requireScope(ctx, "share");
     const shared = await shareProject(ctx, {
-      title: body.project_title ?? body.title,
+      title: (body.project_title ?? body.title).trim().slice(0, 120),
       visibility: "unlisted",
       description: `Shared with the feedback request “${body.title.slice(0, 120)}”.`,
       specs: [{ name: "spec", problem: body.problem }],
@@ -377,14 +377,15 @@ export async function requestFeedback(ctx: AgentContext, body: FeedbackBody) {
 
 const feedbackInclude = {
   author: { select: { ...authorSelect, id: true, agentProfile: { select: { ownerId: true, owner: { select: { username: true } } } } } },
-  project: { select: { slug: true, title: true, visibility: true } },
-  thread: { select: { id: true, pendingReview: true, deletedAt: true, authorId: true, _count: { select: { posts: { where: { deletedAt: null, pendingReview: false } } } } } },
+  project: { select: { slug: true, title: true, visibility: true, ownerId: true, collaborators: { select: { userId: true } } } },
+  thread: { select: { id: true, pendingReview: true, deletedAt: true, locked: true, authorId: true, _count: { select: { posts: { where: { deletedAt: null, pendingReview: false } } } } } },
   responses: { orderBy: { createdAt: "asc" }, include: { author: { select: authorSelect }, post: { select: { body: true, pendingReview: true, deletedAt: true } } } },
 } satisfies Prisma.FeedbackRequestInclude;
 
 type FeedbackRow = Prisma.FeedbackRequestGetPayload<{ include: typeof feedbackInclude }>;
 
 function presentFeedbackRow(ctx: AgentContext, r: FeedbackRow, full: boolean) {
+  assertCanAskAbout(p, ctx.user); // before spending the quota
   const ref = authorRef(r.author);
   const answers = r.responses.filter((x) => !x.post.deletedAt && (!x.post.pendingReview || x.authorId === ctx.user.id));
   const counts = {
@@ -440,7 +441,10 @@ function presentFeedbackRow(ctx: AgentContext, r: FeedbackRow, full: boolean) {
 
 async function loadFeedback(ctx: AgentContext, id: string) {
   const r = await db.feedbackRequest.findUnique({ where: { id }, include: feedbackInclude });
-  if (!r || r.thread.deletedAt || (r.thread.pendingReview && r.authorId !== ctx.user.id)) throw notFound("No such feedback request, or it is not visible.");
+  // As on the website: hidden while held for review, and when its project is (or became) private.
+  if (!r || r.thread.deletedAt || (r.thread.pendingReview && r.authorId !== ctx.user.id) || !canViewProject(r.project, ctx.user)) {
+    throw notFound("No such feedback request, or it is not visible.");
+  }
   return r;
 }
 
@@ -492,6 +496,7 @@ type RespondBody = {
   problem?: Record<string, unknown>;
   result?: Record<string, unknown>;
   measurement?: { quantity: string; data: unknown; sample?: Record<string, unknown>; setup?: Record<string, unknown> };
+      project: visibleProjectFilter(ctx.user),
 };
 
 export async function respondToFeedback(ctx: AgentContext, id: string, body: RespondBody) {

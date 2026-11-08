@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { db } from "../db";
 import { ApiError } from "../api/errors";
+import { canContribute, hasRole } from "../roles";
 import { publishEffects, writeReply, type Via, type Writer } from "../forum/write";
-import { validateProblem } from "../problem/problem";
+import { problemTooLarge, validateProblem } from "../problem/problem";
 import { makePreview, parseResult, type ResultPreview } from "../problem/result";
 import { getJsonText, putJson } from "../storage";
 import { compareMeasurement, compareRerun, type Comparison } from "./compare";
@@ -33,12 +34,29 @@ export async function feedbackCategory() {
 
 export const feedbackKey = (requestId: string, id: string) => `feedback/${requestId}/${id}.json.gz`;
 
+/**
+ * Prisma filter for the projects whose feedback requests `viewer` may see: the same rule as
+ * canViewProject (src/lib/roles.ts). A request about a project that became private is hidden too.
+ */
+export function visibleProjectFilter(viewer: { id: string; role: string } | null): Prisma.ProjectWhereInput {
+  if (viewer && hasRole(viewer.role, "admin")) return {};
+  return { OR: [{ visibility: { not: "private" } }, ...(viewer ? [{ ownerId: viewer.id }, { collaborators: { some: { userId: viewer.id } } }] : [])] };
+}
+
 type SpecRow = { id: string; name: string; kind: string; json: string; projectId: string };
 type ResultRow = { id: string; name: string; kind: string; storageKey: string; preview: string; projectId: string } | null;
 
+/** Feedback is asked about your own simulations: projects you own or collaborate on, not private ones. */
+export function assertCanAskAbout(project: { visibility: string; ownerId: string; collaborators: { userId: string }[] }, author: { id: string; role: string }) {
+  if (!canContribute(project, author)) {
+    throw new ApiError(403, "forbidden", "You can ask for feedback only on a project you own or collaborate on. Share your own project (or send the problem and result inline) instead.");
+  }
+  if (project.visibility === "private") throw new ApiError(400, "private_project", "Feedback needs other people to see the simulation: make the project public or unlisted first.");
+}
+
 export async function createFeedbackRequest(input: {
-  author: Writer;
-  project: { id: string; visibility: string; currentVersionId: string | null };
+  author: Writer & { role: string };
+  project: { id: string; visibility: string; currentVersionId: string | null; ownerId: string; collaborators: { userId: string }[] };
   spec: SpecRow;
   result: ResultRow;
   title: string;
@@ -47,7 +65,7 @@ export async function createFeedbackRequest(input: {
   via: Via;
   hold: boolean;
 }) {
-  if (input.project.visibility === "private") throw new ApiError(400, "private_project", "Feedback needs other people to see the simulation: make the project public or unlisted first.");
+  assertCanAskAbout(input.project, input.author);
   if (input.spec.projectId !== input.project.id || (input.result && input.result.projectId !== input.project.id)) throw new ApiError(400, "bad_request", "The spec and result must belong to the project.");
   const category = await feedbackCategory();
   const problem = JSON.parse(input.spec.json) as Prisma.InputJsonValue;
@@ -126,15 +144,18 @@ export type Answer =
  */
 export async function answerFeedback(input: {
   author: Writer & { ownerId?: string | null };
-  request: { id: string; status: string; threadId: string; authorId: string; resultKind: string | null; resultPreview: string | null; resultKey: string | null };
+  request: { id: string; status: string; threadId: string; authorId: string; resultKind: string | null; resultPreview: string | null; resultKey: string | null; thread: { locked: boolean } };
   requesterOwnerId: string | null;
   body: string;
   answer: Answer;
   via: Via;
   hold: boolean;
+  /** moderators may still post in a locked discussion, as in the forum */
+  bypassLock?: boolean;
 }) {
   const { request, answer } = input;
   if (request.status !== "open") throw new ApiError(409, "closed", "This feedback request is no longer open.");
+  if (request.thread.locked && !input.bypassLock) throw new ApiError(409, "locked", "A moderator locked the discussion of this feedback request.");
   if (answer.kind === "comment") {
     const post = await writeReply({ author: input.author, threadId: request.threadId, body: input.body, via: input.via, hold: input.hold });
     return { post, response: null };
@@ -148,6 +169,7 @@ export async function answerFeedback(input: {
   let data: Prisma.FeedbackResponseUncheckedCreateInput;
   if (answer.kind === "reproduction") {
     if (!(REPRODUCTION_OUTCOMES as readonly string[]).includes(answer.outcome)) throw new ApiError(400, "bad_request", `outcome must be one of ${REPRODUCTION_OUTCOMES.join(", ")}`);
+    if (problemTooLarge(answer.problem)) throw new ApiError(413, "too_large", "The problem you ran is larger than 2 MB.");
     const v = validateProblem(answer.problem);
     if (!v.ok) throw new ApiError(422, "invalid_spec", "The problem you ran does not validate against the Lightsmith schema.", { issues: v.issues });
     const r = parseResult(answer.result);

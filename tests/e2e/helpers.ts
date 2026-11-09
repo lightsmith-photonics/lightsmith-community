@@ -3,7 +3,7 @@ import AxeBuilder from "@axe-core/playwright";
 
 const MAILPIT = process.env.MAILPIT_URL ?? "http://localhost:58025";
 
-async function messagesTo(email: string, limit: number) {
+export async function messagesTo(email: string, limit: number) {
   const res = await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent(`to:"${email}"`)}&limit=${limit}`);
   return ((await res.json()) as { messages: { ID: string }[] }).messages;
 }

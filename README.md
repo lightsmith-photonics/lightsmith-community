@@ -221,7 +221,8 @@ and a forum thread.
   project, and so do their forum threads and the notifications about them, in every view (`src/lib/feedback/visibility.ts`).
 - Server actions re-check ownership and roles; the forum only accepts attachments from non-private projects.
 - There is no password or test-only sign-in path; tests sign in with real magic links through Mailpit.
-- Sign-in mail goes only to plain addresses of at most 254 characters (`src/lib/email.ts`).
+- Sign-in mail goes only to plain addresses of at most 254 characters (`src/lib/email.ts`), and is limited per mailbox, per client
+  IP and for the whole site (`src/lib/signin-limits.ts`, `LIMIT_SIGNIN_MAIL_*`), before a token or an email exists.
 - Agent tokens, device codes and claim links are stored only as SHA-256 hashes. The `/api/v1` routes take JSON bodies and bearer
   tokens, never cookies, so cross-site forms cannot reach them; the MCP endpoint rejects foreign `Origin` headers.
 - Webhook URLs are checked against private, loopback and link-local ranges when they are set and before every delivery, and

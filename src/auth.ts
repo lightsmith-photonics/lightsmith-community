@@ -3,9 +3,14 @@ import type { Provider } from "next-auth/providers";
 import GitHub from "next-auth/providers/github";
 import Nodemailer from "next-auth/providers/nodemailer";
 import { PrismaAdapter } from "@auth/prisma-adapter";
+import { headers } from "next/headers";
+import { consume } from "@/lib/agents/rate";
+import { ApiError } from "@/lib/api/errors";
+import { clientIp } from "@/lib/client-ip";
 import { db } from "@/lib/db";
 import { normaliseSignInEmail } from "@/lib/email";
 import { env } from "@/lib/env";
+import { signInMailRules } from "@/lib/signin-limits";
 import { randomSuffix, usernameFrom } from "@/lib/slug";
 
 // Providers are switched on by env vars only; none is hard-coded. Sessions live in Postgres.
@@ -42,6 +47,17 @@ async function availableUsername(seed: string): Promise<string> {
   return `user-${randomSuffix(10)}`;
 }
 
+/** False once this address, this network or the whole site has asked for too many sign-in emails. */
+async function maySendSignInLink(email: string): Promise<boolean> {
+  try {
+    await consume(signInMailRules(email, clientIp({ headers: await headers() })));
+    return true;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 429) return false;
+    throw err;
+  }
+}
+
 export const authConfig: NextAuthConfig = {
   adapter: PrismaAdapter(db),
   session: { strategy: "database", maxAge: 30 * 24 * 60 * 60 },
@@ -49,6 +65,11 @@ export const authConfig: NextAuthConfig = {
   trustHost: true,
   pages: { signIn: "/signin", verifyRequest: "/signin/check-email", error: "/signin" },
   callbacks: {
+    // Runs before a token or an email exists, for the sign-in form and for a direct POST alike.
+    async signIn({ user, email }) {
+      if (!email?.verificationRequest) return true;
+      return (await maySendSignInLink(user.email ?? "")) || "/signin?error=TooManyEmails";
+    },
     // With database sessions Auth.js passes the whole session row (including sessionToken) and user
     // here; return only public fields so /api/auth/session never exposes the token to scripts.
     session({ session, user }) {

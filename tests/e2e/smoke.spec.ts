@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { expectAccessible, signIn } from "./helpers";
+import { expectAccessible, messagesTo, signIn } from "./helpers";
 import scatteringSpec from "../../fixtures/demo/scattering.spec.json";
 
 test.describe("public pages", () => {
@@ -14,6 +14,30 @@ test.describe("public pages", () => {
     await expect(page).toHaveURL(/\/signin\?error=InvalidEmail/);
     await expect(page.getByRole("alert").filter({ hasText: "does not look like an email address" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Check your email" })).toHaveCount(0);
+  });
+
+  test("sign-in emails stop at the limit, on the endpoint and on the form", async ({ page, request }) => {
+    const LIMIT = 60; // playwright.config.ts
+    const stamp = Date.now();
+    const email = `limit-${stamp}@example.test`;
+    const tagged = `limit-${stamp}+tag@example.test`;
+    const ask = async (to: string) => {
+      const { csrfToken } = await (await request.get("/api/auth/csrf")).json();
+      const res = await request.post("/api/auth/signin/nodemailer", { form: { email: to, csrfToken, callbackUrl: "/" }, maxRedirects: 0 });
+      return res.headers().location ?? "";
+    };
+    for (let i = 0; i < LIMIT; i++) expect(await ask(i % 2 ? email : tagged)).toContain("/verify-request");
+    expect(await ask(email)).toContain("/signin?error=TooManyEmails");
+    expect(await ask(tagged)).toContain("/signin?error=TooManyEmails"); // the same inbox
+
+    await page.goto("/signin");
+    await page.getByLabel("Email").fill(email);
+    await page.getByRole("button", { name: "Email me a sign-in link" }).click();
+    await expect(page).toHaveURL(/\/signin\?error=TooManyEmails/);
+    await expect(page.getByRole("alert").filter({ hasText: "Too many sign-in emails" })).toBeVisible();
+
+    expect(await ask(`limit-${stamp}-other@example.test`)).toContain("/verify-request"); // others are unaffected
+    expect((await messagesTo(email, 100)).length + (await messagesTo(tagged, 100)).length).toBe(LIMIT);
   });
 
   test("landing page and both themes pass axe", async ({ page }) => {

@@ -34,7 +34,7 @@ export const CLAIM_LOOKUPS_PER_PERSON_PER_HOUR = () => CLAIMS_PER_PERSON_PER_HOU
 /** Active (claimed, not revoked) agents one person may own. */
 export const AGENTS_PER_OWNER = () => envInt("LIMIT_OWNER_AGENTS", 10);
 
-function envInt(name: string, fallback: number): number {
+export function envInt(name: string, fallback: number): number {
   const v = process.env[name];
   if (v === undefined || v === "") return fallback;
   const n = Number(v);

@@ -16,6 +16,7 @@ const ERRORS: Record<string, string> = {
   OAuthAccountNotLinked: "This email is already linked to another sign-in method. Use that method.",
   Configuration: "Sign-in is not configured correctly on this server.",
   EmailSignin: "We could not send the sign-in email. Try again in a moment.",
+  TooManyEmails: "Too many sign-in emails were requested. Links you already received work for 24 hours; otherwise, try again within the hour.",
   InvalidEmail: "That does not look like an email address. Enter a plain address, such as ada@example.org.",
 };
 

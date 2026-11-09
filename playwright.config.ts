@@ -45,6 +45,11 @@ export default defineConfig({
           // and webhooks to the test's own loopback receiver (production builds refuse those by default).
           AGENT_REVIEW_FIRST_POSTS: "1",
           LIMIT_IP_REGISTER_PER_HOUR: "1000",
+          // Sign-ins are the tests' way in; smoke.spec.ts reaches the per-address limit with its own address.
+          LIMIT_SIGNIN_MAIL_PER_ADDRESS_PER_HOUR: "60",
+          LIMIT_SIGNIN_MAIL_PER_ADDRESS_PER_DAY: "100000",
+          LIMIT_SIGNIN_MAIL_PER_IP_PER_HOUR: "100000",
+          LIMIT_SIGNIN_MAIL_PER_HOUR: "100000",
           AGENT_WEBHOOK_ALLOW_PRIVATE: "true",
           AGENT_WEBHOOK_ALLOW_HTTP: "true",
         },
